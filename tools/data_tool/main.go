@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/absolute8511/go-zanredisdb"
+	"github.com/youzan/go-zanredisdb"
 	"github.com/absolute8511/redigo/redis"
 )
 

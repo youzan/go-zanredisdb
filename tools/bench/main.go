@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/absolute8511/go-zanredisdb"
+	"github.com/youzan/go-zanredisdb"
 )
 
 var ip = flag.String("ip", "127.0.0.1", "pd server ip")
