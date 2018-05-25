@@ -24,7 +24,7 @@ type SimpleLogger struct {
 
 func NewSimpleLogger() *SimpleLogger {
 	return &SimpleLogger{
-		logger: log.New(os.Stderr, "", log.LstdFlags|log.Lshortfile|log.Lmicroseconds),
+		logger: log.New(os.Stdout, "", log.LstdFlags|log.Lshortfile|log.Lmicroseconds),
 	}
 }
 
@@ -116,7 +116,7 @@ func (self *LevelLogger) Errorln(f string) {
 	}
 }
 
-var levelLog = NewLevelLogger(2, NewSimpleLogger())
+var levelLog = NewLevelLogger(1, NewSimpleLogger())
 
 // should call only once before any proxy started.
 func SetLogger(level int32, l Logger) {
