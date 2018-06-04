@@ -638,7 +638,7 @@ func (cluster *Cluster) tend() {
 		if node.BroadcastAddress != "" {
 			leaderAddr = net.JoinHostPort(node.BroadcastAddress, node.RedisPort)
 		} else {
-			levelLog.Infof("partition %v missing leader node, use old instead", partID, oldPartInfo.Leader)
+			levelLog.Infof("partition %v missing leader node, use old instead %v", partID, oldPartInfo.Leader)
 			for _, n := range replicas {
 				// only use old leader when the old leader is in new replicas
 				if n == oldLeader {
