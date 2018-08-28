@@ -204,10 +204,11 @@ func FindString(src []string, f string) int {
 
 type Cluster struct {
 	sync.RWMutex
-	conf        *Conf
-	lookupMtx   sync.RWMutex
-	LookupList  []string
-	lookupIndex int
+	conf           *Conf
+	lookupMtx      sync.RWMutex
+	LookupList     []string
+	lookupIndex    int
+	confLookupList []string
 
 	namespace string
 	//parts        Partitions
@@ -221,23 +222,42 @@ type Cluster struct {
 	dialF            func(string) (redis.Conn, error)
 	dialRangeF       func(string) (redis.Conn, error)
 	choseSameDCFirst int32
+	localCluster     *Cluster
+	isLocalForRead   bool
 }
 
 func NewCluster(conf *Conf) *Cluster {
+	var primaryLookups []string
+	var primaryCluster string
+	if err := conf.CheckValid(); err != nil {
+		panic(err)
+	}
+	if len(conf.LookupList) > 0 {
+		primaryLookups = conf.LookupList
+	} else {
+		for _, c := range conf.MultiConf {
+			if c.IsPrimary {
+				primaryLookups = c.LookupList
+				primaryCluster = c.ClusterDC
+				break
+			}
+		}
+	}
 	cluster := &Cluster{
 		quitC:        make(chan struct{}),
 		tendTrigger:  make(chan int, 1),
 		tendInterval: conf.TendInterval,
-		LookupList:   make([]string, len(conf.LookupList)),
+		LookupList:   make([]string, len(primaryLookups)),
 		//nodes:        make(map[string]*RedisHost),
-		namespace: conf.Namespace,
-		conf:      conf,
+		namespace:      conf.Namespace,
+		conf:           conf,
+		confLookupList: primaryLookups,
 	}
 	if cluster.tendInterval <= 0 {
 		panic("tend interval should be great than zero")
 	}
 
-	copy(cluster.LookupList, conf.LookupList)
+	copy(cluster.LookupList, primaryLookups)
 
 	cluster.dialF = func(addr string) (redis.Conn, error) {
 		levelLog.Infof("new conn dial to : %v", addr)
@@ -261,14 +281,30 @@ func NewCluster(conf *Conf) *Cluster {
 	}
 	cluster.tend()
 
-	//if len(cluster.nodes) == 0 {
-	//		levelLog.Errorln("no node in server list is available at init")
-	//	}
-
 	cluster.wg.Add(1)
 
-	go cluster.tendNodes()
+	// for client which is not in the primary cluster dc
+	// all write will be written to primary
+	// the read can be selected read local or primary
+	// for client which is in the primary cluster dc, we just read and write in the same primary dc
+	if conf.DC != primaryCluster && len(conf.MultiConf) > 0 {
+		for _, c := range conf.MultiConf {
+			if c.IsPrimary {
+				continue
+			}
+			if c.ClusterDC != conf.DC {
+				continue
+			}
+			localConf := *conf
+			localConf.LookupList = c.LookupList
+			localConf.MultiConf = nil
+			cluster.localCluster = NewCluster(&localConf)
+			cluster.localCluster.isLocalForRead = true
+			break
+		}
+	}
 
+	go cluster.tendNodes()
 	return cluster
 }
 
@@ -357,7 +393,7 @@ func (cluster *Cluster) GetPartitionNum() int {
 	return cluster.getPartitions().PNum
 }
 
-func (cluster *Cluster) getHostByPart(part PartitionInfo, leader bool) (*RedisHost, error) {
+func getHostByPart(part PartitionInfo, leader bool, sameDCFirst bool, localDC string) (*RedisHost, error) {
 	var picked *RedisHost
 	if leader {
 		picked = part.Leader
@@ -366,8 +402,8 @@ func (cluster *Cluster) getHostByPart(part PartitionInfo, leader bool) (*RedisHo
 			return nil, errNoNodeForPartition
 		}
 		dc := ""
-		if atomic.LoadInt32(&cluster.choseSameDCFirst) == 1 {
-			dc = cluster.conf.DC
+		if sameDCFirst {
+			dc = localDC
 		}
 		picked = getGoodNodeInTheSameDC(&part, dc)
 	}
@@ -398,7 +434,7 @@ func (cluster *Cluster) GetHostByPart(pid int, leader bool) (*RedisHost, error) 
 		return nil, errInvalidPartition
 	}
 	part := parts.PList[pid]
-	return cluster.getHostByPart(part, leader)
+	return getHostByPart(part, leader, cluster.IsSameDCFirst(), cluster.conf.DC)
 }
 
 func (cluster *Cluster) GetAllHostsByPart(pid int) ([]*RedisHost, error) {
@@ -413,14 +449,24 @@ func (cluster *Cluster) GetAllHostsByPart(pid int) ([]*RedisHost, error) {
 	return part.clone().Replicas, nil
 }
 
-func (cluster *Cluster) GetNodeHost(pk []byte, leader bool) (*RedisHost, error) {
+func (cluster *Cluster) IsSameDCFirst() bool {
+	return atomic.LoadInt32(&cluster.choseSameDCFirst) == 1
+}
+
+func (cluster *Cluster) GetNodeHost(pk []byte, leader bool, tryLocalForRead bool) (*RedisHost, error) {
+	if cluster.localCluster != nil && tryLocalForRead {
+		if levelLog.Level() > 2 {
+			levelLog.Detailf("try local dc read for pk: %s", string(pk))
+		}
+		return cluster.localCluster.GetNodeHost(pk, leader, false)
+	}
 	parts, err := cluster.getPartitionsWithError()
 	if err != nil {
 		return nil, err
 	}
 	pid := GetHashedPartitionID(pk, parts.PNum)
 	part := parts.PList[pid]
-	picked, err := cluster.getHostByPart(part, leader)
+	picked, err := getHostByPart(part, leader, cluster.IsSameDCFirst(), cluster.conf.DC)
 	if err != nil {
 		return nil, err
 	}
@@ -431,8 +477,8 @@ func (cluster *Cluster) GetNodeHost(pk []byte, leader bool) (*RedisHost, error) 
 	return picked, nil
 }
 
-func (cluster *Cluster) GetConn(pk []byte, leader bool, isRangeQuery bool) (redis.Conn, error) {
-	picked, err := cluster.GetNodeHost(pk, leader)
+func (cluster *Cluster) GetConn(pk []byte, leader bool, tryLocalForRead bool, isRangeQuery bool) (redis.Conn, error) {
+	picked, err := cluster.GetNodeHost(pk, leader, tryLocalForRead)
 	if err != nil {
 		return nil, err
 	}
@@ -440,8 +486,8 @@ func (cluster *Cluster) GetConn(pk []byte, leader bool, isRangeQuery bool) (redi
 	return conn, err
 }
 
-func (cluster *Cluster) GetHostAndConn(pk []byte, leader bool, isRangeQuery bool) (*RedisHost, redis.Conn, error) {
-	picked, err := cluster.GetNodeHost(pk, leader)
+func (cluster *Cluster) GetHostAndConn(pk []byte, leader bool, tryLocalRead bool, isRangeQuery bool) (*RedisHost, redis.Conn, error) {
+	picked, err := cluster.GetNodeHost(pk, leader, tryLocalRead)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -543,7 +589,7 @@ func (cluster *Cluster) tend() {
 		if httpRespCode < 0 {
 			cluster.lookupMtx.Lock()
 			// remove failed if not seed nodes
-			if FindString(cluster.conf.LookupList, addr) == -1 && IsConnectRefused(err) {
+			if FindString(cluster.confLookupList, addr) == -1 && IsConnectRefused(err) {
 				levelLog.Infof("removing failed lookup : %v", addr)
 				newLookupList := make([]string, 0)
 				for _, v := range cluster.LookupList {
@@ -781,5 +827,9 @@ func (cluster *Cluster) tendNodes() {
 func (cluster *Cluster) Close() {
 	close(cluster.quitC)
 	cluster.wg.Wait()
+	cluster.setPartitions(&Partitions{})
+	if cluster.localCluster != nil {
+		cluster.localCluster.Close()
+	}
 	levelLog.Debugf("cluster exit")
 }

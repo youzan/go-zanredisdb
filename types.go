@@ -38,8 +38,40 @@ func IsFailedOnNotWritable(err error) bool {
 	return false
 }
 
+type RemoteClusterConf struct {
+	LookupList []string
+	IsPrimary  bool
+	ClusterDC  string
+}
+
+type MultiClusterConf []RemoteClusterConf
+
+func (mcc MultiClusterConf) CheckValid() error {
+	primaryCnt := 0
+	for _, c := range mcc {
+		if c.IsPrimary {
+			primaryCnt++
+		}
+		if len(c.LookupList) == 0 {
+			return errors.New("cluster lookup list should not be empty")
+		}
+		if c.ClusterDC == "" {
+			return errors.New("multi clusters conf should have cluster dc info")
+		}
+	}
+	if primaryCnt > 1 {
+		return errors.New("primary cluster should be unique")
+	}
+	if primaryCnt != 1 {
+		return errors.New("missing primary cluster")
+	}
+	return nil
+}
+
 type Conf struct {
-	LookupList       []string
+	LookupList []string
+	// multi conf and lookuplist should not be used both
+	MultiConf        MultiClusterConf
 	DialTimeout      time.Duration
 	ReadTimeout      time.Duration
 	RangeReadTimeout time.Duration
@@ -53,8 +85,19 @@ type Conf struct {
 	TendInterval   int64
 	Namespace      string
 	Password       string
-	// the datacenter info
+	// the datacenter info for client
+	// will be used for a single cluster acrossing datacenter
 	DC string
+}
+
+func (conf *Conf) CheckValid() error {
+	if len(conf.LookupList) > 0 && len(conf.MultiConf) > 0 {
+		return errors.New("configure invalid: should not use both LookupList and MultiConf")
+	}
+	if len(conf.MultiConf) > 0 {
+		return conf.MultiConf.CheckValid()
+	}
+	return nil
 }
 
 // api data response type

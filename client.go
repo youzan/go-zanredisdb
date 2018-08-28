@@ -54,10 +54,14 @@ type ZanRedisClient struct {
 	cluster *Cluster
 }
 
-func NewZanRedisClient(conf *Conf) *ZanRedisClient {
+func NewZanRedisClient(conf *Conf) (*ZanRedisClient, error) {
+	err := conf.CheckValid()
+	if err != nil {
+		return nil, err
+	}
 	return &ZanRedisClient{
 		conf: conf,
-	}
+	}, nil
 }
 
 func (self *ZanRedisClient) Start() {
@@ -104,7 +108,7 @@ func (self *ZanRedisClient) doPipelineCmd(cmds PipelineCmdList,
 			}
 		}
 		errs[i] = nil
-		node, err := self.cluster.GetNodeHost(cmd.ShardingKey, cmd.ToLeader)
+		node, err := self.cluster.GetNodeHost(cmd.ShardingKey, cmd.ToLeader, false)
 		if err != nil {
 			levelLog.Infof("command err while get conn: %v, %v", cmd, err)
 			errs[i] = err
@@ -217,8 +221,22 @@ func (self *ZanRedisClient) FlushAndWaitPipelineCmd(cmds PipelineCmdList) ([]int
 	return rsps, errs
 }
 
+// DoRedisTryLocalRead should be used only for read command.
+// If there is a local dc cluster and read the non-leader is allowed,
+// it will try read local dc cluster first.
+// If failed to read local dc for 2 times it will retry the primary dc cluster.
+func (self *ZanRedisClient) DoRedisTryLocalRead(cmd string, shardingKey []byte, toLeader bool,
+	args ...interface{}) (interface{}, error) {
+	return self.internalDoRedis(cmd, shardingKey, toLeader, true, args...)
+}
+
 func (self *ZanRedisClient) DoRedis(cmd string, shardingKey []byte, toLeader bool,
 	args ...interface{}) (interface{}, error) {
+	return self.internalDoRedis(cmd, shardingKey, toLeader, false, args...)
+}
+
+func (self *ZanRedisClient) internalDoRedis(cmd string, shardingKey []byte, toLeader bool,
+	tryLocalRead bool, args ...interface{}) (interface{}, error) {
 	retry := uint32(0)
 	var err error
 	var rsp interface{}
@@ -232,8 +250,15 @@ func (self *ZanRedisClient) DoRedis(cmd string, shardingKey []byte, toLeader boo
 	isRangeQuery := IsRangeCmd(cmd)
 	for retry < 3 || time.Since(reqStart) < ro {
 		retry++
+		if retry > 2 {
+			// fall back to read primary if failed to read local
+			if tryLocalRead {
+				levelLog.Infof("command %v-%v failed to read local dc, try primary", cmd, string(shardingKey))
+				tryLocalRead = false
+			}
+		}
 		retryStart := time.Now()
-		redisHost, conn, err = self.cluster.GetHostAndConn(shardingKey, toLeader, isRangeQuery)
+		redisHost, conn, err = self.cluster.GetHostAndConn(shardingKey, toLeader, tryLocalRead, isRangeQuery)
 		cost1 := time.Since(retryStart)
 		if cost1 > time.Millisecond*100 {
 			levelLog.Infof("command %v-%v slow to get conn, cost: %v", cmd, string(shardingKey), cost1)
@@ -263,7 +288,8 @@ func (self *ZanRedisClient) DoRedis(cmd string, shardingKey []byte, toLeader boo
 		if err != nil {
 			clusterChanged := self.cluster.MaybeTriggerCheckForError(err, 0)
 			if clusterChanged {
-				levelLog.Infof("command err for cluster changed: %v, %v, node: %v", shardingKey, args, remote)
+				levelLog.Infof("command err for cluster changed: %v, %v, node: %v",
+					shardingKey, args, remote)
 				// we can retry for cluster error
 			} else if _, ok := err.(redis.Error); ok {
 				// other error from command reply no need retry

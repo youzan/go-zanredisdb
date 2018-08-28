@@ -8,10 +8,11 @@ import (
 	"time"
 
 	"github.com/absolute8511/redigo/redis"
+	"github.com/stretchr/testify/assert"
 )
 
 var pdAddr = "127.0.0.1:18001"
-var testNS = "yz_test_p4"
+var testNS = "test"
 
 type testLogger struct {
 	t *testing.T
@@ -29,6 +30,13 @@ func (self *testLogger) Flush() {
 }
 func newTestLogger(t *testing.T) *testLogger {
 	return &testLogger{t}
+}
+
+func TestHashPid(t *testing.T) {
+	pid := GetHashedPartitionID([]byte("test_perf_kv3:0000000002"), 16)
+	assert.Equal(t, 15, pid)
+	pid = GetHashedPartitionID([]byte("test_perf_kv3:0000000002"), 32)
+	assert.Equal(t, 31, pid)
 }
 
 func TestClusterInfo(t *testing.T) {
@@ -55,7 +63,7 @@ func TestClusterInfo(t *testing.T) {
 	if nodeNum != len(cluster.getPartitions().PList) {
 		t.Fatal("cluster nodes should not changed")
 	}
-	conn, err := cluster.GetConn([]byte("11"), true, false)
+	conn, err := cluster.GetConn([]byte("11"), true, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,6 +74,14 @@ func TestClusterInfo(t *testing.T) {
 }
 
 func TestClusterReadWrite(t *testing.T) {
+	testClusterReadWriteForMultiCluster(t, false)
+}
+
+func TestClusterReadWriteForMultiCluster(t *testing.T) {
+	testClusterReadWriteForMultiCluster(t, true)
+}
+
+func testClusterReadWriteForMultiCluster(t *testing.T, testMultiConf bool) {
 	conf := &Conf{
 		DialTimeout:  time.Second * 2,
 		ReadTimeout:  time.Second * 2,
@@ -73,7 +89,15 @@ func TestClusterReadWrite(t *testing.T) {
 		TendInterval: 1,
 		Namespace:    testNS,
 	}
-	conf.LookupList = append(conf.LookupList, pdAddr)
+	if !testMultiConf {
+		conf.LookupList = append(conf.LookupList, pdAddr)
+	} else {
+		conf.MultiConf = append(conf.MultiConf, RemoteClusterConf{
+			LookupList: []string{pdAddr},
+			IsPrimary:  true,
+			ClusterDC:  "t1",
+		})
+	}
 	logLevel := int32(2)
 	if testing.Verbose() {
 		logLevel = 3
@@ -86,8 +110,8 @@ func TestClusterReadWrite(t *testing.T) {
 		t.Fatal("cluster nodes should not empty")
 	}
 	for i := 0; i < 10; i++ {
-		pk := NewPKey(conf.Namespace, "unittest", []byte("rw11"+strconv.Itoa(i)))
-		conn, err := cluster.GetConn(pk.ShardingKey(), true, false)
+		pk := NewPKey(conf.Namespace, "unittest_multicluster", []byte("rw11"+strconv.Itoa(i)))
+		conn, err := cluster.GetConn(pk.ShardingKey(), true, false, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -114,6 +138,93 @@ func TestClusterReadWrite(t *testing.T) {
 	}
 }
 
+func TestClusterReadLocalPrimary(t *testing.T) {
+	testClusterReadLocal(t, true)
+}
+
+func TestClusterReadLocalNonPrimary(t *testing.T) {
+	testClusterReadLocal(t, false)
+}
+
+func testClusterReadLocal(t *testing.T, testSameWithPrimary bool) {
+	conf := &Conf{
+		DialTimeout:  time.Second * 2,
+		ReadTimeout:  time.Second * 2,
+		WriteTimeout: time.Second * 2,
+		TendInterval: 1,
+		Namespace:    testNS,
+		DC:           "t1",
+	}
+	if testSameWithPrimary {
+		conf.MultiConf = append(conf.MultiConf, RemoteClusterConf{
+			LookupList: []string{pdAddr},
+			IsPrimary:  true,
+			ClusterDC:  "t1",
+		},
+			RemoteClusterConf{
+				LookupList: []string{pdAddr},
+				IsPrimary:  false,
+				ClusterDC:  "t2",
+			},
+		)
+	} else {
+		conf.MultiConf = append(conf.MultiConf, RemoteClusterConf{
+			LookupList: []string{pdAddr},
+			IsPrimary:  true,
+			ClusterDC:  "t2",
+		},
+			RemoteClusterConf{
+				LookupList: []string{pdAddr},
+				IsPrimary:  false,
+				ClusterDC:  "t1",
+			},
+		)
+	}
+
+	logLevel := int32(2)
+	if testing.Verbose() {
+		logLevel = 3
+	}
+	SetLogger(logLevel, newTestLogger(t))
+	cluster := NewCluster(conf)
+	defer cluster.Close()
+	nodeNum := len(cluster.getPartitions().PList)
+	if nodeNum == 0 {
+		t.Fatal("cluster nodes should not empty")
+	}
+	for i := 0; i < 10; i++ {
+		pk := NewPKey(conf.Namespace, "unittest_multicluster", []byte("rw11"+strconv.Itoa(i)))
+		conn, err := cluster.GetConn(pk.ShardingKey(), true, false, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+		connRead, err := cluster.GetConn(pk.ShardingKey(), true, true, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer connRead.Close()
+		rawKey := pk.RawKey
+		conn.Do("DEL", rawKey)
+		value, err := redis.Bytes(connRead.Do("GET", rawKey))
+		if err != redis.ErrNil && len(value) > 0 {
+			t.Fatalf("should be deleted:%v, value:%v", err, value)
+		}
+
+		testValue := pk.ShardingKey()
+		_, err = redis.String(conn.Do("SET", rawKey, testValue))
+		if err != nil {
+			t.Fatal(err)
+		}
+		value, err = redis.Bytes(connRead.Do("GET", rawKey))
+		if err != nil {
+			t.Error(err)
+		} else if !bytes.Equal(value, testValue) {
+			t.Errorf("should equal: %v, %v", value, testValue)
+		}
+		conn.Do("DEL", rawKey)
+	}
+}
 func TestClusterRemoveFailedLookup(t *testing.T) {
 	conf := &Conf{
 		DialTimeout:  time.Second * 2,
@@ -190,7 +301,7 @@ func BenchmarkGetNodePool(b *testing.B) {
 			defer wg.Done()
 			for i := 0; i < b.N; i++ {
 				pk := NewPKey(conf.Namespace, "unittest", []byte("rw11"+strconv.Itoa(i)))
-				conn, err := cluster.GetConn(pk.ShardingKey(), true, false)
+				conn, err := cluster.GetConn(pk.ShardingKey(), true, false, false)
 				if err != nil {
 					b.Error(err)
 					break

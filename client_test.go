@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/absolute8511/redigo/redis"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestClientMget(t *testing.T) {
@@ -25,7 +26,8 @@ func TestClientMget(t *testing.T) {
 		logLevel = 3
 	}
 	SetLogger(logLevel, newTestLogger(t))
-	zanClient := NewZanRedisClient(conf)
+	zanClient, err := NewZanRedisClient(conf)
+	assert.Nil(t, err)
 	zanClient.Start()
 	defer zanClient.Stop()
 	time.Sleep(time.Second)
@@ -117,7 +119,8 @@ func TestClientMExistsAndDel(t *testing.T) {
 		logLevel = 3
 	}
 	SetLogger(logLevel, newTestLogger(t))
-	zanClient := NewZanRedisClient(conf)
+	zanClient, err := NewZanRedisClient(conf)
+	assert.Nil(t, err)
 	zanClient.Start()
 	defer zanClient.Stop()
 	time.Sleep(time.Second)
@@ -216,7 +219,8 @@ func TestClientPipeline(t *testing.T) {
 		logLevel = 3
 	}
 	SetLogger(logLevel, newTestLogger(t))
-	zanClient := NewZanRedisClient(conf)
+	zanClient, err := NewZanRedisClient(conf)
+	assert.Nil(t, err)
 	zanClient.Start()
 	defer zanClient.Stop()
 	time.Sleep(time.Second)
@@ -314,7 +318,8 @@ func TestClientScan(t *testing.T) {
 		logLevel = 3
 	}
 	SetLogger(logLevel, newTestLogger(t))
-	zanClient := NewZanRedisClient(conf)
+	zanClient, err := NewZanRedisClient(conf)
+	assert.Nil(t, err)
 	zanClient.Start()
 	defer zanClient.Stop()
 	time.Sleep(time.Second)
@@ -436,7 +441,8 @@ func TestClientSScan(t *testing.T) {
 		logLevel = 3
 	}
 	SetLogger(logLevel, newTestLogger(t))
-	zanClient := NewZanRedisClient(conf)
+	zanClient, err := NewZanRedisClient(conf)
+	assert.Nil(t, err)
 	zanClient.Start()
 	defer zanClient.Stop()
 	time.Sleep(time.Second)
@@ -522,7 +528,8 @@ func TestClientHScan(t *testing.T) {
 		logLevel = 3
 	}
 	SetLogger(logLevel, newTestLogger(t))
-	zanClient := NewZanRedisClient(conf)
+	zanClient, err := NewZanRedisClient(conf)
+	assert.Nil(t, err)
 	zanClient.Start()
 	defer zanClient.Stop()
 	time.Sleep(time.Second)
@@ -621,7 +628,8 @@ func TestClientZScan(t *testing.T) {
 		logLevel = 3
 	}
 	SetLogger(logLevel, newTestLogger(t))
-	zanClient := NewZanRedisClient(conf)
+	zanClient, err := NewZanRedisClient(conf)
+	assert.Nil(t, err)
 	zanClient.Start()
 	defer zanClient.Stop()
 	time.Sleep(time.Second)
@@ -699,5 +707,91 @@ func TestClientZScan(t *testing.T) {
 	_, err = zanClient.DoRedis("ZCLEAR", pk.ShardingKey(), true, pk.RawKey)
 	if err != nil {
 		t.Errorf("rsp err: %v", err)
+	}
+}
+
+func TestClientReadLocalPrimary(t *testing.T) {
+	testClientReadLocal(t, true, false)
+}
+
+func TestClientReadLocalNonPrimary(t *testing.T) {
+	testClientReadLocal(t, false, false)
+}
+
+func TestClientReadFailedLocalNonPrimary(t *testing.T) {
+	testClientReadLocal(t, false, true)
+}
+
+func testClientReadLocal(t *testing.T, testSameWithPrimary bool, testFailedLocal bool) {
+	conf := &Conf{
+		DialTimeout:  time.Second * 2,
+		ReadTimeout:  time.Second * 2,
+		WriteTimeout: time.Second * 2,
+		TendInterval: 1,
+		Namespace:    testNS,
+		DC:           "t1",
+	}
+	if testSameWithPrimary {
+		conf.MultiConf = append(conf.MultiConf, RemoteClusterConf{
+			LookupList: []string{pdAddr},
+			IsPrimary:  true,
+			ClusterDC:  "t1",
+		},
+			RemoteClusterConf{
+				LookupList: []string{pdAddr},
+				IsPrimary:  false,
+				ClusterDC:  "t2",
+			},
+		)
+	} else {
+		failedPD := pdAddr
+		if testFailedLocal {
+			failedPD = "127.0.0.1:18001"
+		}
+		conf.MultiConf = append(conf.MultiConf, RemoteClusterConf{
+			LookupList: []string{pdAddr},
+			IsPrimary:  true,
+			ClusterDC:  "t2",
+		},
+			RemoteClusterConf{
+				LookupList: []string{failedPD},
+				IsPrimary:  false,
+				ClusterDC:  "t1",
+			},
+		)
+	}
+
+	logLevel := int32(2)
+	if testing.Verbose() {
+		logLevel = 3
+	}
+	SetLogger(logLevel, newTestLogger(t))
+	zanClient, err := NewZanRedisClient(conf)
+	assert.Nil(t, err)
+	zanClient.Start()
+	defer zanClient.Stop()
+	time.Sleep(time.Second)
+	for i := 0; i < 10; i++ {
+		pk := NewPKey(conf.Namespace, "unittest_multiclient", []byte("rw11"+strconv.Itoa(i)))
+		rawKey := pk.RawKey
+		testValue := pk.ShardingKey()
+		_, err := zanClient.DoRedis("DEL", pk.ShardingKey(), true, rawKey)
+		value, err := redis.Bytes(zanClient.DoRedisTryLocalRead("GET", pk.ShardingKey(),
+			true, rawKey))
+		if err != redis.ErrNil && len(value) > 0 {
+			t.Fatalf("should be deleted:%v, value:%v", err, value)
+		}
+
+		_, err = redis.String(zanClient.DoRedis("SET", pk.ShardingKey(), true, rawKey, testValue))
+		if err != nil {
+			t.Fatal(err)
+		}
+		value, err = redis.Bytes(zanClient.DoRedisTryLocalRead("GET", pk.ShardingKey(), true, rawKey))
+		if err != nil {
+			t.Error(err)
+		} else if !bytes.Equal(value, testValue) {
+			t.Errorf("should equal: %v, %v", value, testValue)
+		}
+		zanClient.DoRedis("DEL", pk.ShardingKey(), true, rawKey)
 	}
 }
