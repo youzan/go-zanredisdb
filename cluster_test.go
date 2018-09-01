@@ -53,7 +53,7 @@ func TestClusterInfo(t *testing.T) {
 		logLevel = 3
 	}
 	SetLogger(int32(logLevel), newTestLogger(t))
-	cluster := NewCluster(conf)
+	cluster := NewCluster(conf, nil)
 	defer cluster.Close()
 	nodeNum := len(cluster.getPartitions().PList)
 	if nodeNum == 0 {
@@ -103,7 +103,7 @@ func testClusterReadWriteForMultiCluster(t *testing.T, testMultiConf bool) {
 		logLevel = 3
 	}
 	SetLogger(logLevel, newTestLogger(t))
-	cluster := NewCluster(conf)
+	cluster := NewCluster(conf, nil)
 	defer cluster.Close()
 	nodeNum := len(cluster.getPartitions().PList)
 	if nodeNum == 0 {
@@ -186,7 +186,7 @@ func testClusterReadLocal(t *testing.T, testSameWithPrimary bool) {
 		logLevel = 3
 	}
 	SetLogger(logLevel, newTestLogger(t))
-	cluster := NewCluster(conf)
+	cluster := NewCluster(conf, nil)
 	defer cluster.Close()
 	nodeNum := len(cluster.getPartitions().PList)
 	if nodeNum == 0 {
@@ -241,7 +241,7 @@ func TestClusterRemoveFailedLookup(t *testing.T) {
 		logLevel = 3
 	}
 	SetLogger(logLevel, newTestLogger(t))
-	cluster := NewCluster(conf)
+	cluster := NewCluster(conf, nil)
 	defer cluster.Close()
 	nodeNum := len(cluster.getPartitions().PList)
 	if nodeNum == 0 {
@@ -286,7 +286,7 @@ func BenchmarkGetNodePool(b *testing.B) {
 		Namespace:    testNS,
 	}
 	conf.LookupList = append(conf.LookupList, pdAddr)
-	cluster := NewCluster(conf)
+	cluster := NewCluster(conf, nil)
 	defer cluster.Close()
 	nodeNum := len(cluster.getPartitions().PList)
 	if nodeNum == 0 {

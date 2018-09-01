@@ -14,8 +14,19 @@ import (
 	"github.com/absolute8511/redigo/redis"
 )
 
+var ErrSizeExceedLimit = errors.New("key value size exceeded the limit")
+
 const (
-	MIN_RETRY_SLEEP = time.Millisecond * 16
+	MinRetrySleep = time.Millisecond * 16
+	anyCmd        = 0
+	readCmd       = 1
+	writeCmd      = 2
+)
+
+const (
+	defCmd int = iota
+	batchCmd
+	exceptionCmd
 )
 
 func filterDuplicateConn(conns []redis.Conn) []redis.Conn {
@@ -50,8 +61,9 @@ func (pl *PipelineCmdList) Add(cmd string, shardingKey []byte, toLeader bool,
 }
 
 type ZanRedisClient struct {
-	conf    *Conf
-	cluster *Cluster
+	conf         *Conf
+	largeKeyConf *LargeKeyConf
+	cluster      *Cluster
 }
 
 func NewZanRedisClient(conf *Conf) (*ZanRedisClient, error) {
@@ -64,8 +76,12 @@ func NewZanRedisClient(conf *Conf) (*ZanRedisClient, error) {
 	}, nil
 }
 
+func (self *ZanRedisClient) SetLargeKeyConf(conf *LargeKeyConf) {
+	self.largeKeyConf = conf
+}
+
 func (self *ZanRedisClient) Start() {
-	self.cluster = NewCluster(self.conf)
+	self.cluster = NewCluster(self.conf, self.largeKeyConf)
 }
 
 // while deploy across two datacenters, to improve read latency we can
@@ -213,7 +229,7 @@ func (self *ZanRedisClient) FlushAndWaitPipelineCmd(cmds PipelineCmdList) ([]int
 			}
 		}
 		if needRetry {
-			time.Sleep(MIN_RETRY_SLEEP + time.Millisecond*time.Duration(10*(2<<retry)))
+			time.Sleep(MinRetrySleep + time.Millisecond*time.Duration(10*(2<<retry)))
 		} else {
 			break
 		}
@@ -227,17 +243,34 @@ func (self *ZanRedisClient) FlushAndWaitPipelineCmd(cmds PipelineCmdList) ([]int
 // If failed to read local dc for 2 times it will retry the primary dc cluster.
 func (self *ZanRedisClient) DoRedisTryLocalRead(cmd string, shardingKey []byte, toLeader bool,
 	args ...interface{}) (interface{}, error) {
-	return self.internalDoRedis(cmd, shardingKey, toLeader, true, args...)
+	return self.internalDoRedis(cmd, shardingKey, readCmd, defCmd, toLeader, true, args...)
+}
+
+func (self *ZanRedisClient) DoRedisForRead(cmd string, shardingKey []byte, toLeader bool,
+	args ...interface{}) (interface{}, error) {
+	return self.internalDoRedis(cmd, shardingKey, readCmd, defCmd, toLeader, false, args...)
+}
+
+func (self *ZanRedisClient) DoRedisForWrite(cmd string, shardingKey []byte, toLeader bool,
+	args ...interface{}) (interface{}, error) {
+	return self.internalDoRedis(cmd, shardingKey, writeCmd, defCmd, toLeader, false, args...)
+}
+
+func (self *ZanRedisClient) DoRedisForException(cmd string, shardingKey []byte, toLeader bool,
+	args ...interface{}) (interface{}, error) {
+	return self.internalDoRedis(cmd, shardingKey, anyCmd, exceptionCmd, toLeader, false, args...)
 }
 
 func (self *ZanRedisClient) DoRedis(cmd string, shardingKey []byte, toLeader bool,
 	args ...interface{}) (interface{}, error) {
-	return self.internalDoRedis(cmd, shardingKey, toLeader, false, args...)
+	return self.internalDoRedis(cmd, shardingKey, anyCmd, defCmd, toLeader, false, args...)
 }
 
-func (self *ZanRedisClient) internalDoRedis(cmd string, shardingKey []byte, toLeader bool,
+func (self *ZanRedisClient) internalDoRedis(cmd string, shardingKey []byte,
+	cmdKind int, ct int, toLeader bool,
 	tryLocalRead bool, args ...interface{}) (interface{}, error) {
 	retry := uint32(0)
+	retryCnt := 3
 	var err error
 	var rsp interface{}
 	var conn redis.Conn
@@ -247,8 +280,32 @@ func (self *ZanRedisClient) internalDoRedis(cmd string, shardingKey []byte, toLe
 	if ro == 0 {
 		ro = time.Second
 	}
-	isRangeQuery := IsRangeCmd(cmd)
-	for retry < 3 || time.Since(reqStart) < ro {
+	isSlowQuery := IsSlowCmd(cmd)
+	if ct == batchCmd {
+		isSlowQuery = true
+	}
+	largeSize := 0
+	if ct == exceptionCmd {
+		largeSize = self.largeKeyConf.MaxAllowedValueSize - 1
+		retryCnt = 1
+	} else {
+		if cmdKind == writeCmd && self.largeKeyConf != nil && ct != exceptionCmd &&
+			self.largeKeyConf.MaxAllowedValueSize > 0 {
+			for i := 1; i < len(args); i++ {
+				switch vt := args[i].(type) {
+				case []byte:
+					largeSize += len(vt)
+				case string:
+					largeSize += len(vt)
+				default:
+				}
+				if largeSize >= self.largeKeyConf.MaxAllowedValueSize {
+					return rsp, ErrSizeExceedLimit
+				}
+			}
+		}
+	}
+	for retry < uint32(retryCnt) || time.Since(reqStart) < ro {
 		retry++
 		if retry > 2 {
 			// fall back to read primary if failed to read local
@@ -258,13 +315,19 @@ func (self *ZanRedisClient) internalDoRedis(cmd string, shardingKey []byte, toLe
 			}
 		}
 		retryStart := time.Now()
-		redisHost, conn, err = self.cluster.GetHostAndConn(shardingKey, toLeader, tryLocalRead, isRangeQuery)
+
+		cluster := self.cluster
+		if largeSize > 0 {
+			redisHost, conn, err = cluster.GetHostAndConnForLarge(shardingKey, toLeader, tryLocalRead, largeSize)
+		} else {
+			redisHost, conn, err = cluster.GetHostAndConn(shardingKey, toLeader, tryLocalRead, isSlowQuery)
+		}
 		cost1 := time.Since(retryStart)
 		if cost1 > time.Millisecond*100 {
 			levelLog.Infof("command %v-%v slow to get conn, cost: %v", cmd, string(shardingKey), cost1)
 		}
 		if err != nil {
-			clusterChanged := self.cluster.MaybeTriggerCheckForError(err, 0)
+			clusterChanged := cluster.MaybeTriggerCheckForError(err, 0)
 			if clusterChanged {
 				levelLog.Infof("command err for cluster changed: %v", cmd)
 			} else {
@@ -273,7 +336,7 @@ func (self *ZanRedisClient) internalDoRedis(cmd string, shardingKey []byte, toLe
 			if redisHost != nil {
 				redisHost.MaybeIncFailed(err)
 			}
-			time.Sleep(MIN_RETRY_SLEEP + time.Millisecond*time.Duration(10*(2<<retry)))
+			time.Sleep(MinRetrySleep + time.Millisecond*time.Duration(10*(2<<retry)))
 			continue
 		}
 
@@ -286,7 +349,7 @@ func (self *ZanRedisClient) internalDoRedis(cmd string, shardingKey []byte, toLe
 		}
 
 		if err != nil {
-			clusterChanged := self.cluster.MaybeTriggerCheckForError(err, 0)
+			clusterChanged := cluster.MaybeTriggerCheckForError(err, 0)
 			if clusterChanged {
 				levelLog.Infof("command err for cluster changed: %v, %v, node: %v",
 					shardingKey, args, remote)
@@ -297,7 +360,7 @@ func (self *ZanRedisClient) internalDoRedis(cmd string, shardingKey []byte, toLe
 				break
 			}
 			redisHost.MaybeIncFailed(err)
-			time.Sleep(MIN_RETRY_SLEEP + time.Millisecond*time.Duration(10*(2<<retry)))
+			time.Sleep(MinRetrySleep + time.Millisecond*time.Duration(10*(2<<retry)))
 		} else {
 			redisHost.IncSuccess()
 			break
@@ -644,7 +707,7 @@ func (client *ZanRedisClient) DoScan(cmd, tp, set string, count int, cursor []by
 		}
 		if err != nil {
 			client.cluster.MaybeTriggerCheckForError(err, 0)
-			time.Sleep(MIN_RETRY_SLEEP + time.Millisecond*time.Duration(10*(2<<retry)))
+			time.Sleep(MinRetrySleep + time.Millisecond*time.Duration(10*(2<<retry)))
 			continue
 		}
 		rsps = make([]interface{}, len(conns))
@@ -738,7 +801,7 @@ func (client *ZanRedisClient) DoScanChannel(cmd, tp, set string, stopC chan stru
 					break
 				default:
 				}
-				time.Sleep(MIN_RETRY_SLEEP + time.Millisecond*time.Duration(10*(2<<retry)))
+				time.Sleep(MinRetrySleep + time.Millisecond*time.Duration(10*(2<<retry)))
 				continue
 			}
 			var wg sync.WaitGroup
@@ -822,7 +885,7 @@ func (client *ZanRedisClient) DoFullScanChannel(tp, set string, stopC chan struc
 					break
 				default:
 				}
-				time.Sleep(MIN_RETRY_SLEEP + time.Millisecond*time.Duration(10*(2<<retry)))
+				time.Sleep(MinRetrySleep + time.Millisecond*time.Duration(10*(2<<retry)))
 				continue
 			}
 
@@ -924,7 +987,7 @@ func (client *ZanRedisClient) DoFullScan(cmd, tp, set string, count int, cursor 
 		}
 		if err != nil {
 			client.cluster.MaybeTriggerCheckForError(err, 0)
-			time.Sleep(MIN_RETRY_SLEEP + time.Millisecond*time.Duration(10*(2<<retry)))
+			time.Sleep(MinRetrySleep + time.Millisecond*time.Duration(10*(2<<retry)))
 			continue
 		}
 
@@ -987,7 +1050,7 @@ func (client *ZanRedisClient) DoFullScan(cmd, tp, set string, count int, cursor 
 	return encodedCursor, result, err
 }
 
-func IsRangeCmd(cmd string) bool {
+func IsSlowCmd(cmd string) bool {
 	lcmd := strings.ToLower(cmd)
 	if _, ok := slowCmds[lcmd]; ok {
 		return true

@@ -7,6 +7,12 @@ import (
 	"sync/atomic"
 )
 
+const (
+	LOG_ERR int32 = iota
+	LOG_INFO
+	LOG_DEBUG
+)
+
 type Logger interface {
 	Output(depth int, s string)
 	OutputErr(depth int, s string)
@@ -62,7 +68,7 @@ func (self *LevelLogger) Level() int32 {
 }
 
 func (self *LevelLogger) Infof(f string, args ...interface{}) {
-	if self.Logger != nil && self.level > 0 {
+	if self.Logger != nil && self.level >= LOG_INFO {
 		self.Logger.Output(2, fmt.Sprintf(f, args...))
 	}
 }
@@ -75,19 +81,19 @@ func (self *LevelLogger) Printf(f string, args ...interface{}) {
 }
 
 func (self *LevelLogger) Infoln(f string) {
-	if self.Logger != nil && self.level > 0 {
+	if self.Logger != nil && self.level >= LOG_INFO {
 		self.Logger.Output(2, f)
 	}
 }
 
 func (self *LevelLogger) Debugf(f string, args ...interface{}) {
-	if self.Logger != nil && self.level > 1 {
+	if self.Logger != nil && self.level >= LOG_DEBUG {
 		self.Logger.Output(2, fmt.Sprintf(f, args...))
 	}
 }
 
 func (self *LevelLogger) Detailf(f string, args ...interface{}) {
-	if self.Logger != nil && self.level > 2 {
+	if self.Logger != nil && self.level > LOG_DEBUG {
 		self.Logger.Output(2, fmt.Sprintf(f, args...))
 	}
 }
@@ -116,7 +122,7 @@ func (self *LevelLogger) Errorln(f string) {
 	}
 }
 
-var levelLog = NewLevelLogger(1, NewSimpleLogger())
+var levelLog = NewLevelLogger(LOG_INFO, NewSimpleLogger())
 
 // should call only once before any proxy started.
 func SetLogger(level int32, l Logger) {

@@ -7,12 +7,18 @@ import (
 )
 
 var (
-	FailedOnClusterChanged = "ERR_CLUSTER_CHANGED"
-	FailedOnNotLeader      = "E_FAILED_ON_NOT_LEADER"
-	FailedOnNotWritable    = "E_FAILED_ON_NOT_WRITABLE"
-	FailedOnNodeStopped    = "the node stopped"
-	errNoNodeForPartition  = errors.New("no partition node")
-	errNoConnForHost       = errors.New("no any connection for host")
+	FailedOnClusterChanged           = "ERR_CLUSTER_CHANGED"
+	FailedOnNotLeader                = "E_FAILED_ON_NOT_LEADER"
+	FailedOnNotWritable              = "E_FAILED_ON_NOT_WRITABLE"
+	FailedOnNodeStopped              = "the node stopped"
+	errNoNodeForPartition            = errors.New("no partition node")
+	errNoConnForHost                 = errors.New("no any connection for host")
+	defaultGetConnTimeoutForLargeKey = time.Millisecond * 500
+)
+
+const (
+	defaultMaxValueSize            = 1024 * 1024
+	defaultLargeKeyConnPoolMinSize = 1
 )
 
 func IsConnectRefused(err error) bool {
@@ -66,6 +72,20 @@ func (mcc MultiClusterConf) CheckValid() error {
 		return errors.New("missing primary cluster")
 	}
 	return nil
+}
+
+type LargeKeyConf struct {
+	MinPoolSize               int
+	GetConnTimeoutForLargeKey time.Duration
+	MaxAllowedValueSize       int
+}
+
+func NewLargeKeyConf() *LargeKeyConf {
+	return &LargeKeyConf{
+		MaxAllowedValueSize:       defaultMaxValueSize,
+		GetConnTimeoutForLargeKey: defaultGetConnTimeoutForLargeKey,
+		MinPoolSize:               defaultLargeKeyConnPoolMinSize,
+	}
 }
 
 type Conf struct {

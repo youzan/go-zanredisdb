@@ -205,6 +205,113 @@ func TestClientMExistsAndDel(t *testing.T) {
 	}
 }
 
+func TestClientExceptionKey(t *testing.T) {
+	testClientLargeKey(t, true)
+}
+
+func TestClientLargeKey(t *testing.T) {
+	testClientLargeKey(t, false)
+}
+
+func testClientLargeKey(t *testing.T, exception bool) {
+	conf := &Conf{
+		DialTimeout:  time.Second * 2,
+		ReadTimeout:  time.Second * 2,
+		WriteTimeout: time.Second * 2,
+		TendInterval: 1,
+		Namespace:    testNS,
+	}
+	conf.LookupList = append(conf.LookupList, pdAddr)
+	largeConf := NewLargeKeyConf()
+	largeConf.MaxAllowedValueSize = 1024
+
+	logLevel := int32(2)
+	if testing.Verbose() {
+		logLevel = 3
+	}
+	SetLogger(logLevel, newTestLogger(t))
+	zanClient, err := NewZanRedisClient(conf)
+	zanClient.SetLargeKeyConf(largeConf)
+	assert.Nil(t, err)
+	zanClient.Start()
+	defer zanClient.Stop()
+	time.Sleep(time.Second)
+
+	largeK1Value := make([]byte, largeConf.MaxAllowedValueSize)
+	_, err = zanClient.DoRedisForWrite("SET", []byte("testpk"), true, []byte("testpk"), largeK1Value)
+	assert.Equal(t, ErrSizeExceedLimit, err)
+	largeKVs := make([][]byte, 0)
+	largeKVs = append(largeKVs, make([]byte, len(largeK1Value)-10))
+	for i := 1; i < 5; i++ {
+		largeV := make([]byte, len(largeK1Value)/(i*2)-10)
+		largeKVs = append(largeKVs, largeV)
+	}
+
+	partNum := zanClient.cluster.GetPartitionNum()
+	mutipleKeysNum := []int{partNum - 2, partNum, partNum * 5}
+
+	for _, keysNum := range mutipleKeysNum {
+		if keysNum < 0 {
+			keysNum = 1
+		}
+
+		testPrefix := "rw" + strconv.FormatUint(rand.New(rand.NewSource(time.Now().Unix())).Uint64(), 36)
+		testKeys := make([]*PKey, 0, keysNum)
+		testValues := make([][]byte, 0, keysNum)
+
+		for i := 0; i < keysNum; i++ {
+			pk := NewPKey(conf.Namespace, "unittest", []byte(testPrefix+strconv.Itoa(i)))
+			testKeys = append(testKeys, pk)
+			rawKey := pk.RawKey
+			testValue := largeKVs[i%len(largeKVs)]
+			t.Logf("test set large value size: %d", len(testValue))
+			if exception {
+				_, err := zanClient.DoRedisForException("SET", pk.ShardingKey(), true, rawKey, testValue)
+				assert.Nil(t, err)
+			} else {
+				_, err := zanClient.DoRedisForWrite("SET", pk.ShardingKey(), true, rawKey, testValue)
+				assert.Nil(t, err)
+			}
+			testValues = append(testValues, testValue)
+		}
+		t.Logf("test values: %v", len(testValues))
+		mgetVals, err := zanClient.KVMGet(true, testKeys...)
+		if err != nil {
+			t.Errorf("failed mget: %v", err)
+		}
+		if len(mgetVals) != len(testKeys) {
+			t.Errorf("mget count mismatch: %v %v", len(mgetVals), len(testKeys))
+		}
+		for i, val := range mgetVals {
+			t.Log(string(val))
+			if !bytes.Equal(val, testValues[i]) {
+				t.Errorf("should equal: %v, %v", val, string(testValues[i]))
+			}
+		}
+		var delPipelines PipelineCmdList
+		for i := 0; i < len(testKeys); i++ {
+			delPipelines.Add("DEL", testKeys[i].ShardingKey(), true, testKeys[i].RawKey)
+		}
+		rsps, _ := zanClient.FlushAndWaitPipelineCmd(delPipelines)
+		if len(rsps) != len(delPipelines) {
+			t.Errorf("rsp list should be equal to pipeline num %v vs %v", len(rsps), len(delPipelines))
+		}
+
+		mgetVals, err = zanClient.KVMGet(true, testKeys...)
+		if err != nil {
+			t.Errorf("failed mget: %v", err)
+		}
+		if len(mgetVals) != len(testKeys) {
+			t.Errorf("mget count mismatch: %v %v", len(mgetVals), len(testKeys))
+		}
+		t.Log(mgetVals)
+		for _, val := range mgetVals {
+			if len(val) > 0 {
+				t.Errorf("should empty after del: %v", val)
+			}
+		}
+	}
+}
 func TestClientPipeline(t *testing.T) {
 	conf := &Conf{
 		DialTimeout:  time.Second * 2,
