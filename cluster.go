@@ -127,10 +127,13 @@ func (rh *RedisHost) InitConnPool(
 		lconf := *conf
 		lconf.MaxActiveConn = largeConf.MinPoolSize
 		lconf.WriteTimeout *= 2
+		lconf.ReadTimeout *= 2
+		lconf.RangeReadTimeout *= 2
 		lconf.MaxIdleConn = largeConf.MinPoolSize
+		maxActive := lconf.MaxActiveConn
 		for i := 0; i < LargeKeyPoolNum; i++ {
 			llconf := lconf
-			llconf.MaxActiveConn *= (i + 1)
+			llconf.MaxActiveConn = maxActive
 			rh.largeKVPool = append(rh.largeKVPool, newConnPool(
 				llconf.MaxIdleConn,
 				llconf.MaxActiveConn,
@@ -138,6 +141,7 @@ func (rh *RedisHost) InitConnPool(
 				testBorrow,
 				&llconf,
 			))
+			maxActive *= 2
 		}
 	}
 }

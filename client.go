@@ -17,7 +17,7 @@ import (
 var ErrSizeExceedLimit = errors.New("key value size exceeded the limit")
 
 const (
-	MinRetrySleep = time.Millisecond * 16
+	MinRetrySleep = time.Millisecond * 10
 	anyCmd        = 0
 	readCmd       = 1
 	writeCmd      = 2
@@ -144,10 +144,10 @@ func (self *ZanRedisClient) doPipelineCmd(cmds PipelineCmdList,
 		}
 		reqs[i] = conn
 		cost := time.Since(retryStart)
-		if cost > time.Millisecond*10 {
-			levelLog.Infof("pipeline command get conn slow, cost: %v", cost)
+		if cost > MinRetrySleep {
+			levelLog.Infof("pipeline command get conn %v slow, cost: %v", conn.RemoteAddrStr(), cost)
 		}
-		if levelLog.Level() > 2 {
+		if levelLog.Level() > LOG_INFO {
 			levelLog.Debugf("command %v send to conn: %v", cmd, conn.RemoteAddrStr())
 		}
 		errs[i] = conn.Send(cmd.CmdName, cmd.Args...)
@@ -285,8 +285,10 @@ func (self *ZanRedisClient) internalDoRedis(cmd string, shardingKey []byte,
 		isSlowQuery = true
 	}
 	largeSize := 0
-	if ct == exceptionCmd {
-		largeSize = self.largeKeyConf.MaxAllowedValueSize - 1
+	if ct == exceptionCmd || len(args) > defaultManyArgsNum {
+		if self.largeKeyConf != nil {
+			largeSize = self.largeKeyConf.MaxAllowedValueSize - 1
+		}
 		retryCnt = 1
 	} else {
 		if cmdKind == writeCmd && self.largeKeyConf != nil && ct != exceptionCmd &&
@@ -322,16 +324,19 @@ func (self *ZanRedisClient) internalDoRedis(cmd string, shardingKey []byte,
 		} else {
 			redisHost, conn, err = cluster.GetHostAndConn(shardingKey, toLeader, tryLocalRead, isSlowQuery)
 		}
-		cost1 := time.Since(retryStart)
-		if cost1 > time.Millisecond*100 {
-			levelLog.Infof("command %v-%v slow to get conn, cost: %v", cmd, string(shardingKey), cost1)
-		}
+
 		if err != nil {
 			clusterChanged := cluster.MaybeTriggerCheckForError(err, 0)
 			if clusterChanged {
 				levelLog.Infof("command err for cluster changed: %v", cmd)
 			} else {
 				levelLog.Infof("command err : %v, %v", cmd, err.Error())
+				if self.largeKeyConf != nil && largeSize > self.largeKeyConf.MaxAllowedValueSize/4 {
+					// avoid retry for large key or exception key to reduce
+					// the affection for normal keys.
+					levelLog.Infof("large or exception command : %v, %v", cmd, largeSize)
+					break
+				}
 			}
 			if redisHost != nil {
 				redisHost.MaybeIncFailed(err)
@@ -339,8 +344,12 @@ func (self *ZanRedisClient) internalDoRedis(cmd string, shardingKey []byte,
 			time.Sleep(MinRetrySleep + time.Millisecond*time.Duration(10*(2<<retry)))
 			continue
 		}
-
 		remote := conn.RemoteAddrStr()
+		cost1 := time.Since(retryStart)
+		if cost1 > time.Millisecond*100 {
+			levelLog.Infof("command %v-%v slow to get conn %v, cost: %v", cmd,
+				string(shardingKey), remote, cost1)
+		}
 		rsp, err = DoRedisCmd(conn, cmd, args...)
 		cost := time.Since(retryStart)
 		if cost > time.Millisecond*200 {

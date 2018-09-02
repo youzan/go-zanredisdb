@@ -17,8 +17,9 @@ var (
 )
 
 const (
-	defaultMaxValueSize            = 1024 * 1024
+	defaultMaxValueSize            = 1023 * 1024
 	defaultLargeKeyConnPoolMinSize = 1
+	defaultManyArgsNum             = 1024
 )
 
 func IsConnectRefused(err error) bool {
