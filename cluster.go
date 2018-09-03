@@ -55,6 +55,14 @@ func getPoolType(isRange bool) PoolType {
 	return poolType
 }
 
+type HostStats struct {
+	PoolCnt         int   `json:"pool_cnt,omitempty"`
+	RangePoolCnt    int   `json:"range_pool_cnt,omitempty"`
+	LargeKeyPoolCnt []int `json:"large_key_pool_cnt,omitempty"`
+	FailedCnt       int64 `json:"failed_cnt,omitempty"`
+	FailedTs        int64 `json:"failed_cnt,omitempty"`
+}
+
 type RedisHost struct {
 	addr string
 	// datacenter
@@ -212,6 +220,9 @@ func (rh *RedisHost) MaybeIncFailed(err error) {
 	if _, ok := err.(redis.Error); ok {
 		return
 	}
+	if err == redis.ErrPoolExhausted {
+		return
+	}
 	cnt := atomic.AddInt64(&rh.lastFailedCnt, 1)
 	atomic.StoreInt64(&rh.lastFailedTs, time.Now().UnixNano())
 	levelLog.Debugf("host %v inc failed count to %v for err: %v", rh.addr, cnt, err)
@@ -228,6 +239,33 @@ func (rh *RedisHost) IncSuccess() {
 	if fcnt < 0 {
 		atomic.StoreInt64(&rh.lastFailedCnt, 0)
 	}
+}
+
+func (rh *RedisHost) ChangeMaxActive(maxActive int, rangeRatio float64) {
+	if maxActive <= 0 {
+		return
+	}
+	if rangeRatio < 0.01 {
+		rangeRatio = 0.4
+	}
+	maxRangeActive := int(float64(maxActive) * rangeRatio)
+	if maxRangeActive < 1 {
+		maxRangeActive = 1
+	}
+	rh.connPool.SetMaxActive(int32(maxActive))
+	rh.rangeConnPool.SetMaxActive(int32(maxRangeActive))
+}
+
+func (rh *RedisHost) Stats() HostStats {
+	var hs HostStats
+	hs.FailedCnt = atomic.LoadInt64(&rh.lastFailedCnt)
+	hs.FailedTs = atomic.LoadInt64(&rh.lastFailedTs)
+	hs.PoolCnt = rh.connPool.Count()
+	hs.RangePoolCnt = rh.rangeConnPool.Count()
+	for _, p := range rh.largeKVPool {
+		hs.LargeKeyPoolCnt = append(hs.LargeKeyPoolCnt, p.Count())
+	}
+	return hs
 }
 
 type PartitionInfo struct {
@@ -400,6 +438,24 @@ func (cluster *Cluster) MaybeTriggerCheckForError(err error, delay time.Duration
 		return true
 	}
 	return false
+}
+
+func (cluster *Cluster) GetHostStats() map[string]HostStats {
+	parts := cluster.getPartitions()
+	nodes := getNodesFromParts(parts)
+	hss := make(map[string]HostStats, len(nodes))
+	for k, n := range nodes {
+		hss[k] = n.Stats()
+	}
+	return hss
+}
+
+func (cluster *Cluster) ChangeMaxActive(active int) {
+	parts := cluster.getPartitions()
+	nodes := getNodesFromParts(parts)
+	for _, n := range nodes {
+		n.ChangeMaxActive(active, cluster.conf.RangeConnRatio)
+	}
 }
 
 func (cluster *Cluster) getPartitions() *Partitions {

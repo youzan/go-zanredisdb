@@ -2,9 +2,11 @@ package zanredisdb
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -215,11 +217,12 @@ func TestClientLargeKey(t *testing.T) {
 
 func testClientLargeKey(t *testing.T, exception bool) {
 	conf := &Conf{
-		DialTimeout:  time.Second * 2,
-		ReadTimeout:  time.Second * 2,
-		WriteTimeout: time.Second * 2,
-		TendInterval: 1,
-		Namespace:    testNS,
+		DialTimeout:   time.Second * 2,
+		ReadTimeout:   time.Second * 2,
+		WriteTimeout:  time.Second * 2,
+		TendInterval:  1,
+		Namespace:     testNS,
+		MaxActiveConn: 32,
 	}
 	conf.LookupList = append(conf.LookupList, pdAddr)
 	largeConf := NewLargeKeyConf()
@@ -311,7 +314,40 @@ func testClientLargeKey(t *testing.T, exception bool) {
 			}
 		}
 	}
+
+	hss := zanClient.cluster.GetHostStats()
+	d, _ := json.Marshal(hss)
+	t.Logf("host stats: %v", string(d))
+	var wg sync.WaitGroup
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for k := 0; k < 20; k++ {
+				pk := NewPKey(conf.Namespace, "unittest", []byte("largekv_concurrent"+strconv.Itoa(k)))
+				rawKey := pk.RawKey
+				for _, v := range largeKVs {
+					if exception {
+						zanClient.DoRedisForException("SET", pk.ShardingKey(), true, rawKey, v)
+					} else {
+						zanClient.DoRedisForWrite("SET", pk.ShardingKey(), true, rawKey, v)
+					}
+				}
+				_, err = zanClient.DoRedis("DEL", pk.ShardingKey(), true, rawKey)
+			}
+		}()
+	}
+	wg.Wait()
+	hss = zanClient.cluster.GetHostStats()
+	d, _ = json.Marshal(hss)
+	t.Logf("host stats after concurrent: %v", string(d))
+	for _, hs := range hss {
+		assert.Equal(t, 1, hs.LargeKeyPoolCnt[0])
+		assert.True(t, hs.LargeKeyPoolCnt[1] <= 2)
+		assert.True(t, hs.LargeKeyPoolCnt[2] <= 4)
+	}
 }
+
 func TestClientPipeline(t *testing.T) {
 	conf := &Conf{
 		DialTimeout:  time.Second * 2,

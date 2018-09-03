@@ -284,10 +284,10 @@ func (self *ZanRedisClient) internalDoRedis(cmd string, shardingKey []byte,
 	if ct == batchCmd {
 		isSlowQuery = true
 	}
-	largeSize := 0
+	argsVSize := 0
 	if ct == exceptionCmd || len(args) > defaultManyArgsNum {
 		if self.largeKeyConf != nil {
-			largeSize = self.largeKeyConf.MaxAllowedValueSize - 1
+			argsVSize = self.largeKeyConf.MaxAllowedValueSize - 1
 		}
 		retryCnt = 1
 	} else {
@@ -296,16 +296,20 @@ func (self *ZanRedisClient) internalDoRedis(cmd string, shardingKey []byte,
 			for i := 1; i < len(args); i++ {
 				switch vt := args[i].(type) {
 				case []byte:
-					largeSize += len(vt)
+					argsVSize += len(vt)
 				case string:
-					largeSize += len(vt)
+					argsVSize += len(vt)
 				default:
 				}
-				if largeSize >= self.largeKeyConf.MaxAllowedValueSize {
+				if argsVSize >= self.largeKeyConf.MaxAllowedValueSize {
 					return rsp, ErrSizeExceedLimit
 				}
 			}
 		}
+	}
+	isLargeKey := false
+	if self.largeKeyConf != nil {
+		isLargeKey = (argsVSize > self.largeKeyConf.MaxAllowedValueSize/4)
 	}
 	for retry < uint32(retryCnt) || time.Since(reqStart) < ro {
 		retry++
@@ -319,8 +323,8 @@ func (self *ZanRedisClient) internalDoRedis(cmd string, shardingKey []byte,
 		retryStart := time.Now()
 
 		cluster := self.cluster
-		if largeSize > 0 {
-			redisHost, conn, err = cluster.GetHostAndConnForLarge(shardingKey, toLeader, tryLocalRead, largeSize)
+		if argsVSize > 0 {
+			redisHost, conn, err = cluster.GetHostAndConnForLarge(shardingKey, toLeader, tryLocalRead, argsVSize)
 		} else {
 			redisHost, conn, err = cluster.GetHostAndConn(shardingKey, toLeader, tryLocalRead, isSlowQuery)
 		}
@@ -330,13 +334,13 @@ func (self *ZanRedisClient) internalDoRedis(cmd string, shardingKey []byte,
 			if clusterChanged {
 				levelLog.Infof("command err for cluster changed: %v", cmd)
 			} else {
-				levelLog.Infof("command err : %v, %v", cmd, err.Error())
-				if self.largeKeyConf != nil && largeSize > self.largeKeyConf.MaxAllowedValueSize/4 {
+				if isLargeKey {
 					// avoid retry for large key or exception key to reduce
 					// the affection for normal keys.
-					levelLog.Infof("large or exception command : %v, %v", cmd, largeSize)
+					levelLog.Infof("large or exception command err : %v, %v, %v", cmd, argsVSize, err.Error())
 					break
 				}
+				levelLog.Infof("command err : %v, %v, %v", cmd, err.Error(), argsVSize)
 			}
 			if redisHost != nil {
 				redisHost.MaybeIncFailed(err)
@@ -363,11 +367,19 @@ func (self *ZanRedisClient) internalDoRedis(cmd string, shardingKey []byte,
 				levelLog.Infof("command err for cluster changed: %v, %v, node: %v",
 					shardingKey, args, remote)
 				// we can retry for cluster error
-			} else if _, ok := err.(redis.Error); ok {
-				// other error from command reply no need retry
-				// can fail fast for some un-recovery error
-				break
+			} else {
+				if _, ok := err.(redis.Error); ok {
+					// other error from command reply no need retry
+					// can fail fast for some un-recovery error
+					break
+				}
+				if isLargeKey {
+					levelLog.Infof("large or exception key err: %v, %v, %v", cmd, argsVSize, err.Error())
+					break
+				}
+				levelLog.Infof("command err : %v, %v, %v", cmd, err.Error(), argsVSize)
 			}
+
 			redisHost.MaybeIncFailed(err)
 			time.Sleep(MinRetrySleep + time.Millisecond*time.Duration(10*(2<<retry)))
 		} else {
