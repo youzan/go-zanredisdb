@@ -278,6 +278,11 @@ func testClientLargeKey(t *testing.T, exception bool) {
 			testValues = append(testValues, testValue)
 		}
 		t.Logf("test values: %v", len(testValues))
+		for index, pk := range testKeys {
+			rsp, err := redis.Bytes(zanClient.DoRedis("GET", pk.ShardingKey(), true, pk.RawKey))
+			assert.Nil(t, err)
+			assert.Equal(t, testValues[index], rsp)
+		}
 		mgetVals, err := zanClient.KVMGet(true, testKeys...)
 		if err != nil {
 			t.Errorf("failed mget: %v", err)

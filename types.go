@@ -75,6 +75,13 @@ func (mcc MultiClusterConf) CheckValid() error {
 	return nil
 }
 
+// This configuration will be used to isolate the large key write and exception key access.
+// Write a value large than max allowed size will return error and for
+// MaxAllowedValueSize > value > MaxAllowedValueSize/2, a isolated pool with only MinPoolSize connection will be used
+// MaxAllowedValueSize/2 > value > MaxAllowedValueSize/4, a isolated pool with only 2*MinPoolSize connections will be used
+// MaxAllowedValueSize/4 > value > MaxAllowedValueSize/8, a isolated pool with only 4*MinPoolSize connections will be used
+// for command with more than 1024 arguments will use the isolated pool with only MinPoolSize connection
+// for exception command will use the isolated pool with only MinPoolSize connection
 type LargeKeyConf struct {
 	MinPoolSize               int
 	GetConnTimeoutForLargeKey time.Duration

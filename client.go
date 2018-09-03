@@ -310,6 +310,9 @@ func (self *ZanRedisClient) internalDoRedis(cmd string, shardingKey []byte,
 	isLargeKey := false
 	if self.largeKeyConf != nil {
 		isLargeKey = (argsVSize > self.largeKeyConf.MaxAllowedValueSize/4)
+		if isLargeKey {
+			levelLog.Infof("command %v-%v large key value: %v", cmd, string(shardingKey), argsVSize)
+		}
 	}
 	for retry < uint32(retryCnt) || time.Since(reqStart) < ro {
 		retry++
@@ -337,10 +340,11 @@ func (self *ZanRedisClient) internalDoRedis(cmd string, shardingKey []byte,
 				if isLargeKey {
 					// avoid retry for large key or exception key to reduce
 					// the affection for normal keys.
-					levelLog.Infof("large or exception command err : %v, %v, %v", cmd, argsVSize, err.Error())
+					levelLog.Infof("large or exception command err : %v-%v, %v, %v", cmd,
+						string(shardingKey), argsVSize, err.Error())
 					break
 				}
-				levelLog.Infof("command err : %v, %v, %v", cmd, err.Error(), argsVSize)
+				levelLog.Infof("command err : %v-%v, %v, %v", cmd, string(shardingKey), err.Error(), argsVSize)
 			}
 			if redisHost != nil {
 				redisHost.MaybeIncFailed(err)
@@ -374,10 +378,10 @@ func (self *ZanRedisClient) internalDoRedis(cmd string, shardingKey []byte,
 					break
 				}
 				if isLargeKey {
-					levelLog.Infof("large or exception key err: %v, %v, %v", cmd, argsVSize, err.Error())
+					levelLog.Infof("large or exception key err: %v-%v, %v, %v", cmd, string(shardingKey), argsVSize, err.Error())
 					break
 				}
-				levelLog.Infof("command err : %v, %v, %v", cmd, err.Error(), argsVSize)
+				levelLog.Infof("command err : %v-%v, %v, %v", cmd, string(shardingKey), err.Error(), argsVSize)
 			}
 
 			redisHost.MaybeIncFailed(err)
@@ -385,6 +389,12 @@ func (self *ZanRedisClient) internalDoRedis(cmd string, shardingKey []byte,
 		} else {
 			redisHost.IncSuccess()
 			break
+		}
+	}
+	if self.largeKeyConf != nil {
+		brsp, _ := redis.Bytes(rsp, err)
+		if len(brsp) > self.largeKeyConf.MaxAllowedValueSize/4 {
+			levelLog.Infof("command %v-%v large response: %v", cmd, string(shardingKey), len(brsp))
 		}
 	}
 	return rsp, err
