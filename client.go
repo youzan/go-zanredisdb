@@ -132,7 +132,7 @@ func (self *ZanRedisClient) doPipelineCmd(cmds PipelineCmdList,
 		}
 		conn, ok := reusedConn[node.addr]
 		if !ok {
-			conn, err = node.connPool.Get(0)
+			conn, err = node.connPool.Get(0, int(cmd.ShardingKey[0]))
 			if err != nil {
 				levelLog.Infof("command err while get conn: %v, %v", cmd, err)
 				errs[i] = err
@@ -269,6 +269,9 @@ func (self *ZanRedisClient) DoRedis(cmd string, shardingKey []byte, toLeader boo
 func (self *ZanRedisClient) internalDoRedis(cmd string, shardingKey []byte,
 	cmdKind int, ct int, toLeader bool,
 	tryLocalRead bool, args ...interface{}) (interface{}, error) {
+	if len(shardingKey) == 0 {
+		return nil, errors.New("missing sharding key")
+	}
 	retry := uint32(0)
 	retryCnt := 3
 	var err error

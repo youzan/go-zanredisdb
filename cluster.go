@@ -89,7 +89,7 @@ func newConnPool(
 	if conf.IdleTimeout > time.Second {
 		connPool.IdleTimeout = conf.IdleTimeout
 	}
-	tmpConn, _ := connPool.Get(0)
+	tmpConn, _ := connPool.Get(0, 0)
 	if tmpConn != nil {
 		tmpConn.Close()
 	}
@@ -624,7 +624,7 @@ func (cluster *Cluster) GetHostAndConn(pk []byte, leader bool, tryLocalForRead b
 	if err != nil {
 		return nil, nil, err
 	}
-	conn, err := picked.ConnPool(getPoolType(isSlowQuery)).Get(0)
+	conn, err := picked.ConnPool(getPoolType(isSlowQuery)).Get(0, int(pk[0]))
 	return picked, conn, err
 }
 
@@ -635,11 +635,11 @@ func (cluster *Cluster) GetHostAndConnForLarge(pk []byte, leader bool, tryLocalF
 	}
 	if cluster.largeKeyConf != nil {
 		rh := picked.getConnPoolForLargeKey(vsize, cluster.largeKeyConf.MaxAllowedValueSize)
-		conn, err := rh.Get(cluster.largeKeyConf.GetConnTimeoutForLargeKey)
+		conn, err := rh.Get(cluster.largeKeyConf.GetConnTimeoutForLargeKey, int(pk[0]))
 		return picked, conn, err
 	}
 
-	conn, err := picked.ConnPool(getPoolType(vsize >= defaultMaxValueSize/4)).Get(0)
+	conn, err := picked.ConnPool(getPoolType(vsize >= defaultMaxValueSize/4)).Get(0, int(pk[0]))
 	return picked, conn, err
 }
 
@@ -653,7 +653,7 @@ func (cluster *Cluster) getConnsByHosts(hosts []string, isSlowQuery bool) ([]red
 	var conns []redis.Conn
 	for _, h := range hosts {
 		if v, ok := nodes[h]; ok {
-			conn, err := v.ConnPool(getPoolType(isSlowQuery)).Get(0)
+			conn, err := v.ConnPool(getPoolType(isSlowQuery)).Get(0, 0)
 			if err != nil {
 				return nil, err
 			}
@@ -678,7 +678,7 @@ func (cluster *Cluster) GetConnsForAllParts(isSlowQuery bool) ([]redis.Conn, err
 		if p.Leader == nil {
 			return nil, errors.New("no leader for partition")
 		}
-		conn, err := p.Leader.ConnPool(getPoolType(isSlowQuery)).Get(0)
+		conn, err := p.Leader.ConnPool(getPoolType(isSlowQuery)).Get(0, 0)
 		if err != nil {
 			return nil, err
 		}

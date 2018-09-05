@@ -3,14 +3,14 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:f17795a0214369027eb4edff1ad188f5a8c3f9f9025024f2c585989a49bb7b43"
+  digest = "1:81f6a4134239f4d4ce43e46316fe9f4a3daf2c82fbc8a22d6095a00698802bfd"
   name = "github.com/absolute8511/redigo"
   packages = [
     "internal",
     "redis",
   ]
   pruneopts = "UT"
-  revision = "08ef9e90bb6b96a4ddaedb992c44bf8a64fc51de"
+  revision = "0486ae4778af7e1d62c4863718d262fcbcd95e57"
 
 [[projects]]
   digest = "1:ffe9824d294da03b391f44e1ae8281281b4afc1bdaa9588c9097785e3af10cec"
