@@ -2,23 +2,30 @@
 
 
 [[projects]]
-  branch = "master"
+  digest = "1:78f0edd57b7b3c40a43970235f83d49ee365b87a8738300c10bec68222179f78"
   name = "github.com/absolute8511/redigo"
   packages = [
     "internal",
-    "redis"
+    "redis",
   ]
+  pruneopts = "UT"
   revision = "d5cd6073d004f894aedf74c2d01a1bb1b700727b"
+  version = "v1.2.0"
 
 [[projects]]
+  digest = "1:919bb3aa6d9d0b67648c219fa4925312bc3c2872da19e818fa769e9c97a2b643"
   name = "github.com/spaolacci/murmur3"
   packages = ["."]
+  pruneopts = "UT"
   revision = "9f5d223c60793748f04a9d5b4b4eacddfc1f755d"
   version = "v1.1"
 
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "997a393cd88a0308cabe522c6d9bec32bc90604cfe20093a37287740cde8be11"
+  input-imports = [
+    "github.com/absolute8511/redigo/redis",
+    "github.com/spaolacci/murmur3",
+  ]
   solver-name = "gps-cdcl"
   solver-version = 1
