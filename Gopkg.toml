@@ -26,8 +26,8 @@
 
 
 [[constraint]]
-  branch = "master"
   name = "github.com/absolute8511/redigo"
+  version = "=1.3.0"
 
 [[constraint]]
   name = "github.com/spaolacci/murmur3"
