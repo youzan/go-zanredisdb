@@ -24,7 +24,7 @@ var round = flag.Int("r", 1, "benchmark round number")
 var logLevel = flag.Int("loglevel", 1, "log level")
 var valueSize = flag.Int("vsize", 100, "kv value size")
 var tests = flag.String("t", "set,get", "only run the comma separated list of tests(supported randget,del,lpush,rpush,lrange,lpop,rpop,hset,randhget,hget,hdel,sadd,sismember,srem,zadd,zrange,zrevrange,zdel)")
-var primaryKeyCnt = flag.Int("pkn", 100, "primary key count for hash,list,set,zset")
+var primaryKeyCnt = flag.Int("pkn", 100, "primary key count for kv,hash,list,set,zset")
 var namespace = flag.String("namespace", "default", "the prefix namespace")
 var table = flag.String("table", "test", "the table to write")
 var maxExpireSecs = flag.Int("maxExpire", 60, "max expire seconds to be allowed with setex")
@@ -181,7 +181,7 @@ func benchSet() {
 	f := func(c *zanredisdb.ZanRedisClient) error {
 		value := make([]byte, *valueSize)
 		copy(value, valueSample)
-		n := atomic.AddInt64(&kvSetBase, 1)
+		n := atomic.AddInt64(&kvSetBase, 1) % int64(*primaryKeyCnt)
 		tmp := fmt.Sprintf("%010d", int(n))
 		ts := time.Now().String()
 		index := 0
@@ -221,7 +221,7 @@ func benchSetEx() {
 	f := func(c *zanredisdb.ZanRedisClient) error {
 		value := make([]byte, *valueSize)
 		copy(value, valueSample)
-		n := atomic.AddInt64(&kvSetBase, 1)
+		n := atomic.AddInt64(&kvSetBase, 1) % int64(*primaryKeyCnt)
 		ttl := rand.Int31n(int32(*maxExpireSecs-*minExpireSecs)) + int32(*minExpireSecs)
 		tmp := fmt.Sprintf("%010d-%d-%s", int(n), ttl, time.Now().String())
 		ts := time.Now().String()
@@ -247,7 +247,7 @@ func benchSetEx() {
 
 func benchGet() {
 	f := func(c *zanredisdb.ZanRedisClient) error {
-		n := atomic.AddInt64(&kvGetBase, 1)
+		n := atomic.AddInt64(&kvGetBase, 1) % int64(*primaryKeyCnt)
 		k := fmt.Sprintf("%010d", int(n))
 		return doCommand(c, "GET", k)
 	}
@@ -265,7 +265,7 @@ func benchRandGet() {
 
 func benchDel() {
 	f := func(c *zanredisdb.ZanRedisClient) error {
-		n := atomic.AddInt64(&kvDelBase, 1)
+		n := atomic.AddInt64(&kvDelBase, 1) % int64(*primaryKeyCnt)
 		k := fmt.Sprintf("%010d", int(n))
 		return doCommand(c, "DEL", k)
 	}
