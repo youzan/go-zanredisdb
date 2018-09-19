@@ -144,7 +144,7 @@ func (self *ZanRedisClient) doPipelineCmd(cmds PipelineCmdList,
 		}
 		reqs[i] = conn
 		cost := time.Since(retryStart)
-		if cost > MinRetrySleep {
+		if cost > time.Millisecond*500 {
 			levelLog.Infof("pipeline command get conn %v slow, cost: %v", conn.RemoteAddrStr(), cost)
 		}
 		if levelLog.Level() > LOG_INFO {
@@ -174,7 +174,7 @@ func (self *ZanRedisClient) doPipelineCmd(cmds PipelineCmdList,
 			retryStart := time.Now()
 			rsps[i], errs[i] = c.Receive()
 			cost := time.Since(retryStart)
-			if cost > time.Millisecond*100 {
+			if cost > time.Millisecond*500 {
 				levelLog.Infof("pipeline command %v to node %v slow, cost: %v", cmds[i], c.RemoteAddrStr(), cost)
 			}
 			redisHost, ok := redisHosts[c.RemoteAddrStr()]
@@ -212,7 +212,7 @@ func (self *ZanRedisClient) FlushAndWaitPipelineCmd(cmds PipelineCmdList) ([]int
 		retryStart := time.Now()
 		rsps, errs = self.doPipelineCmd(cmds, rsps, errs)
 		cost := time.Since(retryStart)
-		if cost > time.Millisecond*200 {
+		if cost > time.Millisecond*500 {
 			levelLog.Infof("pipeline command %v slow, cost: %v", len(cmds), cost)
 		}
 		needRetry := false
