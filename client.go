@@ -314,7 +314,7 @@ func (self *ZanRedisClient) internalDoRedis(cmd string, shardingKey []byte,
 	if self.largeKeyConf != nil {
 		isLargeKey = (argsVSize > self.largeKeyConf.MaxAllowedValueSize/4)
 		if isLargeKey {
-			levelLog.Infof("command %v-%v large key value: %v", cmd, string(shardingKey), argsVSize)
+			levelLog.Infof("command %v-%v large key value: %v, %v", cmd, string(shardingKey), argsVSize, len(args))
 		}
 	}
 	for retry < uint32(retryCnt) || time.Since(reqStart) < ro {
