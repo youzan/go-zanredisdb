@@ -174,18 +174,26 @@ func importNoexist(c *zanredisdb.ZanRedisClient) {
 				time.Sleep(*sleep)
 			}
 		}
+		fk := fmt.Sprintf("%s:%s:%s", writeNs, writeTable, string(k))
+		rsp, err := redis.Int(destClient.Do("exists", fk))
+		if err != nil {
+			log.Printf("error exists %v, %v, err: %v\n", string(k), string(fk), err.Error())
+			continue
+		}
+		if rsp == 1 {
+			continue
+		}
 		v, err := c.KVGet(*table, k)
 		if err != nil {
 			continue
 		}
-		fk := fmt.Sprintf("%s:%s:%s", writeNs, writeTable, string(k))
-		rsp, err := redis.Int(destClient.Do("setnx", fk, v))
+		rsp, err = redis.Int(destClient.Do("setnx", fk, v))
 		if rsp == 1 {
 			success++
 			log.Printf("scanned %v, %d success setnx src:%v(dest:%v), value: %v\n",
 				cnt, success, string(k), string(fk), string(v))
 		} else if err != nil {
-			log.Printf("error setnx %v, %v, value: %v\n", string(k), string(fk), err.Error())
+			log.Printf("error setnx %v, %v, : %v\n", string(k), string(fk), err.Error())
 		}
 	}
 }
