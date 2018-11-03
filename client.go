@@ -552,11 +552,11 @@ func (client *ZanRedisClient) AdvScan(tp, set string, count int, cursor []byte) 
 }
 
 func (client *ZanRedisClient) KVScanChannel(set string, stopC chan struct{}) chan []byte {
-	return client.DoScanChannel("SCAN", "KV", set, stopC)
+	return client.DoScanChannel("ADVSCAN", "kv", set, stopC)
 }
 
 func (client *ZanRedisClient) KVScan(set string, count int, cursor []byte) ([]byte, [][]byte, error) {
-	return client.DoScan("SCAN", "KV", set, count, cursor)
+	return client.DoScan("ADVSCAN", "kv", set, count, cursor)
 }
 
 func (client *ZanRedisClient) doSubScan(cmd, set string, key []byte, count int, cursor []byte) ([]byte, [][]byte, error) {

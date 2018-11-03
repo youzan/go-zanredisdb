@@ -23,8 +23,8 @@ var maxNum = flag.Int64("max-check", 100000, "max number of keys to check")
 
 var destIP = flag.String("dest_ip", "", "dest proxy ip")
 var destPort = flag.Int("dest_port", 3803, "dest proxy port")
-var destNamespace = flag.String("dest_namespace", "default", "the prefix namespace")
-var destTable = flag.String("dest_table", "test", "the table to write")
+var destNamespace = flag.String("dest_namespace", "", "the prefix namespace")
+var destTable = flag.String("dest_table", "", "the table to write")
 
 func doCommand(client *zanredisdb.ZanRedisClient, cmd string, args ...interface{}) (interface{}, error) {
 	v := args[0]
@@ -148,6 +148,15 @@ func importNoexist(c *zanredisdb.ZanRedisClient) {
 		return
 	}
 	defer destClient.Close()
+	writeNs := *destNamespace
+	writeTable := *destTable
+	if writeNs == "" {
+		writeNs = *namespace
+	}
+	if writeTable == "" {
+		writeTable = *table
+	}
+
 	ch := c.KVScanChannel(*table, stopC)
 	cnt := int64(0)
 	success := int64(0)
@@ -169,7 +178,7 @@ func importNoexist(c *zanredisdb.ZanRedisClient) {
 		if err != nil {
 			continue
 		}
-		fk := fmt.Sprintf("%s:%s:%s", *destNamespace, *destTable, string(k))
+		fk := fmt.Sprintf("%s:%s:%s", writeNs, writeTable, string(k))
 		rsp, err := redis.Int(destClient.Do("setnx", fk, v))
 		if rsp == 1 {
 			success++
@@ -189,6 +198,10 @@ func importBigger(c *zanredisdb.ZanRedisClient) {
 		return
 	}
 
+	if *destIP == "" {
+		log.Printf("dest ip should be set\n")
+		return
+	}
 	proxyAddr := fmt.Sprintf("%s:%d", *destIP, *destPort)
 	destClient, err := redis.Dial("tcp", proxyAddr)
 	if err != nil {
@@ -196,6 +209,15 @@ func importBigger(c *zanredisdb.ZanRedisClient) {
 		return
 	}
 	defer destClient.Close()
+	writeNs := *destNamespace
+	writeTable := *destTable
+	if writeNs == "" {
+		writeNs = *namespace
+	}
+	if writeTable == "" {
+		writeTable = *table
+	}
+
 	ch := c.KVScanChannel(*table, stopC)
 	cnt := int64(0)
 	success := int64(0)
@@ -217,7 +239,7 @@ func importBigger(c *zanredisdb.ZanRedisClient) {
 		if err != nil {
 			continue
 		}
-		fk := fmt.Sprintf("%s:%s:%s", *destNamespace, *destTable, string(k))
+		fk := fmt.Sprintf("%s:%s:%s", writeNs, writeTable, string(k))
 		rsp, err := redis.Int(destClient.Do("get", fk))
 		if err != nil {
 			if err == redis.ErrNil {
