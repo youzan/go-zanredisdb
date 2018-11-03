@@ -161,12 +161,12 @@ func importNoexist(c *zanredisdb.ZanRedisClient) {
 	cnt := int64(0)
 	success := int64(0)
 	defer func() {
-		log.Printf("total scanned %v", cnt)
+		log.Printf("total scanned %v, success: %v\n", cnt, success)
 	}()
 	log.Printf("begin import %v\n", *table)
 	for k := range ch {
 		cnt++
-		if cnt > *maxNum {
+		if *maxNum > 0 && cnt > *maxNum {
 			break
 		}
 		if cnt%100 == 0 {
@@ -222,12 +222,12 @@ func importBigger(c *zanredisdb.ZanRedisClient) {
 	cnt := int64(0)
 	success := int64(0)
 	defer func() {
-		log.Printf("total scanned %v", cnt)
+		log.Printf("total scanned %v, success: %v\n", cnt, success)
 	}()
 	log.Printf("begin import %v\n", *table)
 	for k := range ch {
 		cnt++
-		if cnt > *maxNum {
+		if *maxNum > 0 && cnt > *maxNum {
 			break
 		}
 		if cnt%100 == 0 {
