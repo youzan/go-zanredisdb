@@ -8,18 +8,23 @@ import (
 	"strings"
 	"time"
 
-	"github.com/youzan/go-zanredisdb"
 	"github.com/absolute8511/redigo/redis"
+	"github.com/youzan/go-zanredisdb"
 )
 
 var ip = flag.String("ip", "127.0.0.1", "pd server ip")
 var port = flag.Int("port", 18001, "pd server port")
-var checkMode = flag.String("mode", "", "supported check-list/fix-list/dump-keys")
+var checkMode = flag.String("mode", "", "supported check-list/fix-list/dump-keys/import-noexist/import-bigger")
 var dataType = flag.String("data-type", "kv", "data type support kv/hash/list/zset/set")
 var namespace = flag.String("namespace", "default", "the prefix namespace")
 var table = flag.String("table", "test", "the table to write")
 var sleep = flag.Duration("sleep", time.Microsecond, "how much to sleep every 100 keys during scan")
 var maxNum = flag.Int64("max-check", 100000, "max number of keys to check")
+
+var destIP = flag.String("dest_ip", "", "dest proxy ip")
+var destPort = flag.Int("dest_port", 3803, "dest proxy port")
+var destNamespace = flag.String("dest_namespace", "default", "the prefix namespace")
+var destTable = flag.String("dest_table", "test", "the table to write")
 
 func doCommand(client *zanredisdb.ZanRedisClient, cmd string, args ...interface{}) (interface{}, error) {
 	v := args[0]
@@ -128,6 +133,114 @@ func dumpKeys(c *zanredisdb.ZanRedisClient) {
 	}
 }
 
+func importNoexist(c *zanredisdb.ZanRedisClient) {
+	stopC := make(chan struct{})
+	defer close(stopC)
+	if *dataType != "kv" {
+		log.Printf("data type not supported %v\n", *dataType)
+		return
+	}
+
+	proxyAddr := fmt.Sprintf("%s:%d", *destIP, *destPort)
+	destClient, err := redis.Dial("tcp", proxyAddr)
+	if err != nil {
+		log.Printf("failed init dest proxy: %v, %v", proxyAddr, err.Error())
+		return
+	}
+	defer destClient.Close()
+	ch := c.KVScanChannel(*table, stopC)
+	cnt := int64(0)
+	success := int64(0)
+	defer func() {
+		log.Printf("total scanned %v", cnt)
+	}()
+	log.Printf("begin import %v\n", *table)
+	for k := range ch {
+		cnt++
+		if cnt > *maxNum {
+			break
+		}
+		if cnt%100 == 0 {
+			if *sleep > 0 {
+				time.Sleep(*sleep)
+			}
+		}
+		v, err := c.KVGet(*table, k)
+		if err != nil {
+			continue
+		}
+		fk := fmt.Sprintf("%s:%s:%s", *destNamespace, *destTable, string(k))
+		rsp, err := redis.Int(destClient.Do("setnx", fk, v))
+		if rsp == 1 {
+			success++
+			log.Printf("scanned %v, %d success setnx src:%v(dest:%v), value: %v\n",
+				cnt, success, k, string(fk), string(v))
+		} else if err != nil {
+			log.Printf("error setnx %v, %v, value: %v\n", k, string(fk), err.Error())
+		}
+	}
+}
+
+func importBigger(c *zanredisdb.ZanRedisClient) {
+	stopC := make(chan struct{})
+	defer close(stopC)
+	if *dataType != "kv" {
+		log.Printf("data type not supported %v\n", *dataType)
+		return
+	}
+
+	proxyAddr := fmt.Sprintf("%s:%d", *destIP, *destPort)
+	destClient, err := redis.Dial("tcp", proxyAddr)
+	if err != nil {
+		log.Printf("failed init dest proxy: %v, %v", proxyAddr, err.Error())
+		return
+	}
+	defer destClient.Close()
+	ch := c.KVScanChannel(*table, stopC)
+	cnt := int64(0)
+	success := int64(0)
+	defer func() {
+		log.Printf("total scanned %v", cnt)
+	}()
+	log.Printf("begin import %v\n", *table)
+	for k := range ch {
+		cnt++
+		if cnt > *maxNum {
+			break
+		}
+		if cnt%100 == 0 {
+			if *sleep > 0 {
+				time.Sleep(*sleep)
+			}
+		}
+		v, err := redis.Int(c.KVGet(*table, k))
+		if err != nil {
+			continue
+		}
+		fk := fmt.Sprintf("%s:%s:%s", *destNamespace, *destTable, string(k))
+		rsp, err := redis.Int(destClient.Do("get", fk))
+		if err != nil {
+			if err == redis.ErrNil {
+				rsp, _ := redis.Int(destClient.Do("setnx", fk, v))
+				if rsp == 1 {
+					success++
+					log.Printf("scanned %v, setnx src:%v(dest:%v) to value: %v\n",
+						cnt, k, string(fk), v)
+				}
+
+			}
+			continue
+		}
+		if rsp >= v {
+			continue
+		}
+
+		success++
+		log.Printf("scanned %v, %d need check bigger src:%v(dest:%v), value: %v, dest: %v\n",
+			cnt, success, k, string(fk), v, rsp)
+	}
+}
+
 func main() {
 	flag.Parse()
 	zanredisdb.SetLogger(1, zanredisdb.NewSimpleLogger())
@@ -142,7 +255,10 @@ func main() {
 	}
 	pdAddr := fmt.Sprintf("%s:%d", *ip, *port)
 	conf.LookupList = append(conf.LookupList, pdAddr)
-	c := zanredisdb.NewZanRedisClient(conf)
+	c, err := zanredisdb.NewZanRedisClient(conf)
+	if err != nil {
+		panic(err)
+	}
 	c.Start()
 	defer c.Stop()
 	for _, mode := range checkModeList {
@@ -153,6 +269,10 @@ func main() {
 			checkList(true, c)
 		case "dump-keys":
 			dumpKeys(c)
+		case "import-noexist":
+			importNoexist(c)
+		case "import-bigger":
+			importBigger(c)
 		default:
 			log.Printf("unknown check mode: %v", mode)
 		}
