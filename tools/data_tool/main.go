@@ -183,9 +183,9 @@ func importNoexist(c *zanredisdb.ZanRedisClient) {
 		if rsp == 1 {
 			success++
 			log.Printf("scanned %v, %d success setnx src:%v(dest:%v), value: %v\n",
-				cnt, success, k, string(fk), string(v))
+				cnt, success, string(k), string(fk), string(v))
 		} else if err != nil {
-			log.Printf("error setnx %v, %v, value: %v\n", k, string(fk), err.Error())
+			log.Printf("error setnx %v, %v, value: %v\n", string(k), string(fk), err.Error())
 		}
 	}
 }
@@ -247,7 +247,7 @@ func importBigger(c *zanredisdb.ZanRedisClient) {
 				if rsp == 1 {
 					success++
 					log.Printf("scanned %v, setnx src:%v(dest:%v) to value: %v\n",
-						cnt, k, string(fk), v)
+						cnt, string(k), string(fk), v)
 				}
 
 			}
@@ -259,7 +259,7 @@ func importBigger(c *zanredisdb.ZanRedisClient) {
 
 		success++
 		log.Printf("scanned %v, %d need check bigger src:%v(dest:%v), value: %v, dest: %v\n",
-			cnt, success, k, string(fk), v, rsp)
+			cnt, success, string(k), string(fk), v, rsp)
 	}
 }
 
