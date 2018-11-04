@@ -16,12 +16,15 @@ import (
 
 var ip = flag.String("ip", "127.0.0.1", "pd server ip")
 var port = flag.Int("port", 18001, "pd server port")
-var checkMode = flag.String("mode", "", "supported check-list/fix-list/dump-keys/import-noexist/import-bigger")
+var checkMode = flag.String("mode", "", "supported check-list/fix-list/dump-keys/import-noexist/import-bigger/checkrem-zset")
 var dataType = flag.String("data-type", "kv", "data type support kv/hash/list/zset/set")
 var namespace = flag.String("namespace", "default", "the prefix namespace")
 var table = flag.String("table", "test", "the table to write")
 var sleep = flag.Duration("sleep", time.Microsecond, "how much to sleep every 100 keys during scan")
 var maxNum = flag.Int64("max-check", 100000, "max number of keys to check")
+
+var startScore = flag.Int64("start-score", 1531892320000, "start date for scan")
+var stopScore = flag.Int64("stop-score", 1532392320000, "stop date for scan")
 
 var concurrency = flag.Int("concurrency", 1, "concurrency for task")
 
@@ -290,6 +293,123 @@ func importBigger(c *zanredisdb.ZanRedisClient) {
 	wg.Wait()
 }
 
+func checkRemZset(c *zanredisdb.ZanRedisClient) {
+	stopC := make(chan struct{})
+	defer close(stopC)
+	if *dataType != "kv" {
+		log.Printf("data type not supported %v\n", *dataType)
+		return
+	}
+
+	if *destIP == "" {
+		log.Printf("dest ip should be set\n")
+		return
+	}
+
+	writeNs := *destNamespace
+	writeTable := *destTable
+	if writeNs == "" {
+		writeNs = *namespace
+	}
+	if writeTable == "" {
+		writeTable = *table
+	}
+
+	ch := c.AdvScanChannel("zset", *table, stopC)
+	cnt := int64(0)
+	success := int64(0)
+	defer func() {
+		log.Printf("total scanned %v, success: %v\n", cnt, success)
+	}()
+	log.Printf("begin check %v\n", *table)
+	var wg sync.WaitGroup
+	for i := 0; i < *concurrency; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() {
+				log.Printf("one scanned done\n")
+			}()
+			proxyAddr := fmt.Sprintf("%s:%d", *destIP, *destPort)
+			destClient, err := redis.Dial("tcp", proxyAddr)
+			if err != nil {
+				log.Printf("failed init dest proxy: %v, %v", proxyAddr, err.Error())
+				return
+			}
+			defer destClient.Close()
+			for k := range ch {
+				atomic.AddInt64(&cnt, 1)
+				if *maxNum > 0 && atomic.LoadInt64(&cnt) > *maxNum {
+					break
+				}
+
+				fk := fmt.Sprintf("%s:%s:%s", writeNs, writeTable, string(k))
+				rsp, err := redis.Values(destClient.Do("ZRANGEBYSCORE", fk, *startScore, *stopScore))
+				if err != nil {
+					if err != redis.ErrNil {
+						log.Printf("zrange %v error: %v", string(fk), err.Error())
+					}
+					continue
+				}
+				if len(rsp) == 0 {
+					continue
+				}
+				members := make(map[string]bool)
+				for i := 0; i < len(rsp); i++ {
+					v, ok := rsp[i].([]byte)
+					if ok {
+						members[string(v)] = true
+					}
+				}
+				num := len(members)
+
+				pk := zanredisdb.NewPKey(*namespace, *table, k)
+				vs, err := redis.Values(c.DoRedis("ZRANGEBYSCORE", pk.ShardingKey(), true, pk.RawKey, *startScore, *stopScore))
+				if err != nil {
+					log.Printf("zrangebyscore %v failed: %v", string(k), err.Error())
+					if err == redis.ErrNil {
+					} else {
+						continue
+					}
+				}
+				invalid := false
+				for _, m := range vs {
+					v, ok := m.([]byte)
+					if ok {
+						delete(members, string(v))
+					} else {
+						log.Printf("src zrangebyscore %v member invalid: %v", string(k), m)
+						invalid = true
+					}
+				}
+				if len(members) == 0 || invalid {
+					continue
+				}
+				atomic.AddInt64(&success, 1)
+				if len(members) == num {
+					// all should be removed
+					rsp2, err := redis.Int(destClient.Do("ZREMRANGEBYSCORE", fk, *startScore, *stopScore))
+					if err != nil {
+						log.Printf("remove zset %v error: %v", string(fk), err.Error())
+					}
+					log.Printf("scanned %v, %d removed zset member src:%v(dest:%v), members: %v removed: %v\n",
+						atomic.LoadInt64(&cnt), atomic.LoadInt64(&success), string(k), string(fk), members, rsp2)
+					continue
+				}
+				rsp = rsp[:0]
+				rsp = append(rsp, fk)
+				for _, m := range members {
+					rsp = append(rsp, m)
+				}
+				//rsp2, _ := redis.Int(destClient.Do("zrem", rsp...))
+				log.Printf("scanned %v, %d should remove zset member src:%v(dest:%v), members: %v\n",
+					atomic.LoadInt64(&cnt), atomic.LoadInt64(&success), string(k), string(fk), rsp)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
 func main() {
 	flag.Parse()
 	zanredisdb.SetLogger(1, zanredisdb.NewSimpleLogger())
@@ -322,6 +442,8 @@ func main() {
 			importNoexist(c)
 		case "import-bigger":
 			importBigger(c)
+		case "checkrem-zset":
+			checkRemZset(c)
 		default:
 			log.Printf("unknown check mode: %v", mode)
 		}
