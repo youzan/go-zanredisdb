@@ -6,6 +6,8 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/absolute8511/redigo/redis"
@@ -20,6 +22,8 @@ var namespace = flag.String("namespace", "default", "the prefix namespace")
 var table = flag.String("table", "test", "the table to write")
 var sleep = flag.Duration("sleep", time.Microsecond, "how much to sleep every 100 keys during scan")
 var maxNum = flag.Int64("max-check", 100000, "max number of keys to check")
+
+var concurrency = flag.Int("concurrency", 1, "concurrency for task")
 
 var destIP = flag.String("dest_ip", "", "dest proxy ip")
 var destPort = flag.Int("dest_port", 3803, "dest proxy port")
@@ -164,38 +168,44 @@ func importNoexist(c *zanredisdb.ZanRedisClient) {
 		log.Printf("total scanned %v, success: %v\n", cnt, success)
 	}()
 	log.Printf("begin import %v\n", *table)
-	for k := range ch {
-		cnt++
-		if *maxNum > 0 && cnt > *maxNum {
-			break
-		}
-		if cnt%100 == 0 {
-			if *sleep > 0 {
-				time.Sleep(*sleep)
+	var wg sync.WaitGroup
+	for i := 0; i < *concurrency; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() {
+				log.Printf("one scanned done\n")
+			}()
+			for k := range ch {
+				atomic.AddInt64(&cnt, 1)
+				if *maxNum > 0 && atomic.LoadInt64(&cnt) > *maxNum {
+					break
+				}
+				fk := fmt.Sprintf("%s:%s:%s", writeNs, writeTable, string(k))
+				rsp, err := redis.Int(destClient.Do("exists", fk))
+				if err != nil {
+					log.Printf("error exists %v, %v, err: %v\n", string(k), string(fk), err.Error())
+					continue
+				}
+				if rsp == 1 {
+					continue
+				}
+				v, err := c.KVGet(*table, k)
+				if err != nil {
+					continue
+				}
+				rsp, err = redis.Int(destClient.Do("setnx", fk, v))
+				if rsp == 1 {
+					atomic.AddInt64(&success, 1)
+					log.Printf("scanned %v, %d success setnx src:%v(dest:%v), value: %v\n",
+						atomic.LoadInt64(&cnt), atomic.LoadInt64(&success), string(k), string(fk), string(v))
+				} else if err != nil {
+					log.Printf("error setnx %v, %v, : %v\n", string(k), string(fk), err.Error())
+				}
 			}
-		}
-		fk := fmt.Sprintf("%s:%s:%s", writeNs, writeTable, string(k))
-		rsp, err := redis.Int(destClient.Do("exists", fk))
-		if err != nil {
-			log.Printf("error exists %v, %v, err: %v\n", string(k), string(fk), err.Error())
-			continue
-		}
-		if rsp == 1 {
-			continue
-		}
-		v, err := c.KVGet(*table, k)
-		if err != nil {
-			continue
-		}
-		rsp, err = redis.Int(destClient.Do("setnx", fk, v))
-		if rsp == 1 {
-			success++
-			log.Printf("scanned %v, %d success setnx src:%v(dest:%v), value: %v\n",
-				cnt, success, string(k), string(fk), string(v))
-		} else if err != nil {
-			log.Printf("error setnx %v, %v, : %v\n", string(k), string(fk), err.Error())
-		}
+		}()
 	}
+	wg.Wait()
 }
 
 func importBigger(c *zanredisdb.ZanRedisClient) {
@@ -233,42 +243,50 @@ func importBigger(c *zanredisdb.ZanRedisClient) {
 		log.Printf("total scanned %v, success: %v\n", cnt, success)
 	}()
 	log.Printf("begin import %v\n", *table)
-	for k := range ch {
-		cnt++
-		if *maxNum > 0 && cnt > *maxNum {
-			break
-		}
-		if cnt%100 == 0 {
-			if *sleep > 0 {
-				time.Sleep(*sleep)
-			}
-		}
-		v, err := redis.Int(c.KVGet(*table, k))
-		if err != nil {
-			continue
-		}
-		fk := fmt.Sprintf("%s:%s:%s", writeNs, writeTable, string(k))
-		rsp, err := redis.Int(destClient.Do("get", fk))
-		if err != nil {
-			if err == redis.ErrNil {
-				rsp, _ := redis.Int(destClient.Do("setnx", fk, v))
-				if rsp == 1 {
-					success++
-					log.Printf("scanned %v, setnx src:%v(dest:%v) to value: %v\n",
-						cnt, string(k), string(fk), v)
+	var wg sync.WaitGroup
+	for i := 0; i < *concurrency; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() {
+				log.Printf("one scanned done\n")
+			}()
+			for k := range ch {
+				atomic.AddInt64(&cnt, 1)
+				if *maxNum > 0 && atomic.LoadInt64(&cnt) > *maxNum {
+					break
 				}
+				v, err := redis.Int(c.KVGet(*table, k))
+				if err != nil {
+					continue
+				}
+				fk := fmt.Sprintf("%s:%s:%s", writeNs, writeTable, string(k))
+				rsp, err := redis.Int(destClient.Do("get", fk))
+				if err != nil {
+					if err == redis.ErrNil {
+						rsp, _ := redis.Int(destClient.Do("setnx", fk, v))
+						if rsp == 1 {
+							atomic.AddInt64(&success, 1)
+							log.Printf("scanned %v, setnx src:%v(dest:%v) to value: %v\n",
+								atomic.LoadInt64(&cnt), string(k), string(fk), v)
+						}
 
+					}
+					continue
+				}
+				if rsp >= v {
+					continue
+				}
+				diff := v - rsp
+
+				atomic.AddInt64(&success, 1)
+				rsp2, _ := redis.Int(destClient.Do("incrby", fk, diff))
+				log.Printf("scanned %v, %d found bigger src:%v(dest:%v), value: %v, dest: %v, fixed to: %v\n",
+					atomic.LoadInt64(&cnt), atomic.LoadInt64(&success), string(k), string(fk), v, rsp, rsp2)
 			}
-			continue
-		}
-		if rsp >= v {
-			continue
-		}
-
-		success++
-		log.Printf("scanned %v, %d need check bigger src:%v(dest:%v), value: %v, dest: %v\n",
-			cnt, success, string(k), string(fk), v, rsp)
+		}()
 	}
+	wg.Wait()
 }
 
 func main() {
