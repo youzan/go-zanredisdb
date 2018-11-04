@@ -400,7 +400,7 @@ func checkRemZset(c *zanredisdb.ZanRedisClient) {
 				}
 				rsp = rsp[:0]
 				rsp = append(rsp, fk)
-				for _, m := range members {
+				for m, _ := range members {
 					rsp = append(rsp, m)
 				}
 				//rsp2, _ := redis.Int(destClient.Do("zrem", rsp...))
