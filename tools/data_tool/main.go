@@ -145,13 +145,6 @@ func importNoexist(c *zanredisdb.ZanRedisClient) {
 		return
 	}
 
-	proxyAddr := fmt.Sprintf("%s:%d", *destIP, *destPort)
-	destClient, err := redis.Dial("tcp", proxyAddr)
-	if err != nil {
-		log.Printf("failed init dest proxy: %v, %v", proxyAddr, err.Error())
-		return
-	}
-	defer destClient.Close()
 	writeNs := *destNamespace
 	writeTable := *destTable
 	if writeNs == "" {
@@ -176,6 +169,13 @@ func importNoexist(c *zanredisdb.ZanRedisClient) {
 			defer func() {
 				log.Printf("one scanned done\n")
 			}()
+			proxyAddr := fmt.Sprintf("%s:%d", *destIP, *destPort)
+			destClient, err := redis.Dial("tcp", proxyAddr)
+			if err != nil {
+				log.Printf("failed init dest proxy: %v, %v", proxyAddr, err.Error())
+				return
+			}
+			defer destClient.Close()
 			for k := range ch {
 				atomic.AddInt64(&cnt, 1)
 				if *maxNum > 0 && atomic.LoadInt64(&cnt) > *maxNum {
@@ -220,13 +220,7 @@ func importBigger(c *zanredisdb.ZanRedisClient) {
 		log.Printf("dest ip should be set\n")
 		return
 	}
-	proxyAddr := fmt.Sprintf("%s:%d", *destIP, *destPort)
-	destClient, err := redis.Dial("tcp", proxyAddr)
-	if err != nil {
-		log.Printf("failed init dest proxy: %v, %v", proxyAddr, err.Error())
-		return
-	}
-	defer destClient.Close()
+
 	writeNs := *destNamespace
 	writeTable := *destTable
 	if writeNs == "" {
@@ -251,6 +245,13 @@ func importBigger(c *zanredisdb.ZanRedisClient) {
 			defer func() {
 				log.Printf("one scanned done\n")
 			}()
+			proxyAddr := fmt.Sprintf("%s:%d", *destIP, *destPort)
+			destClient, err := redis.Dial("tcp", proxyAddr)
+			if err != nil {
+				log.Printf("failed init dest proxy: %v, %v", proxyAddr, err.Error())
+				return
+			}
+			defer destClient.Close()
 			for k := range ch {
 				atomic.AddInt64(&cnt, 1)
 				if *maxNum > 0 && atomic.LoadInt64(&cnt) > *maxNum {
