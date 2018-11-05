@@ -388,24 +388,29 @@ func checkRemZset(c *zanredisdb.ZanRedisClient) {
 				atomic.AddInt64(&success, 1)
 				if len(members) == num {
 					// all should be removed
-					//rsp2, err := redis.Int(destClient.Do("ZREMRANGEBYSCORE", fk, *startScore, *stopScore))
+					removed := 0
+					if num > 5 {
+						removed, err = redis.Int(destClient.Do("ZREMRANGEBYSCORE", fk, *startScore, *stopScore))
+					}
 					if err != nil {
 						log.Printf("remove zset %v error: %v", string(fk), err.Error())
 					}
-					log.Printf("scanned %v, %d removed zset member src:%v(dest:%v), members: %v \n",
-						atomic.LoadInt64(&cnt), atomic.LoadInt64(&success), string(k), string(fk), members)
-					//log.Printf("scanned %v, %d removed zset member src:%v(dest:%v), members: %v removed: %v\n",
-					//	atomic.LoadInt64(&cnt), atomic.LoadInt64(&success), string(k), string(fk), members, rsp2)
+					log.Printf("scanned %v, %d removed zset member src:%v(dest:%v), members: %v removed: %v\n",
+						atomic.LoadInt64(&cnt), atomic.LoadInt64(&success), string(k), string(fk), members, removed)
 					continue
 				}
+				diff := num - len(members)
 				rsp = rsp[:0]
 				rsp = append(rsp, fk)
 				for m, _ := range members {
 					rsp = append(rsp, m)
 				}
-				//rsp2, _ := redis.Int(destClient.Do("zrem", rsp...))
-				log.Printf("scanned %v, %d should remove zset member src:%v(dest:%v), members: %v\n",
-					atomic.LoadInt64(&cnt), atomic.LoadInt64(&success), string(k), string(fk), rsp)
+				removed := 0
+				if len(members) > 5 {
+					removed, _ = redis.Int(destClient.Do("zrem", rsp...))
+				}
+				log.Printf("scanned %v, %d should remove zset member src:%v(dest:%v), members: %v, removed: %v, diff:%v\n",
+					atomic.LoadInt64(&cnt), atomic.LoadInt64(&success), string(k), string(fk), rsp, removed, diff)
 			}
 		}()
 	}
