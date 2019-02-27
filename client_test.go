@@ -654,7 +654,7 @@ func TestClientSScan(t *testing.T) {
 
 	for i, m := range scanMembers {
 		if string(m) != string(testValues[i]) {
-			t.Errorf("members mismatch:%v, %v, %v", m, testValues[i])
+			t.Errorf("members mismatch:%v, %v", m, testValues[i])
 		}
 	}
 	_, err = zanClient.DoRedis("SCLEAR", pk.ShardingKey(), true, pk.RawKey)

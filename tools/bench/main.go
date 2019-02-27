@@ -95,7 +95,7 @@ func bench(cmd string, f func(c *zanredisdb.ZanRedisClient) error) {
 				DC:            *dc,
 			}
 			conf.LookupList = append(conf.LookupList, pdAddr)
-			c := zanredisdb.NewZanRedisClient(conf)
+			c, _ := zanredisdb.NewZanRedisClient(conf)
 			c.Start()
 			for j := 0; j < loop; j++ {
 				err = f(c)
@@ -276,11 +276,12 @@ func benchDel() {
 func benchPFAdd() {
 	subKeyCnt := int64(*number / (*primaryKeyCnt))
 	f := func(c *zanredisdb.ZanRedisClient) error {
-		n := int64(rand.Int() % *number)
+		rn := rand.Int()
+		n := int64(rn % *number)
 		pk := n / subKeyCnt
 		tmp := fmt.Sprintf("pf_%010d", int(pk))
 		subkey := n - pk*subKeyCnt
-		return doCommand(c, "PFADD", tmp, subkey)
+		return doCommand(c, "PFADD", tmp, subkey, rn)
 	}
 	bench("PFADD", f)
 }

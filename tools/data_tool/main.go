@@ -285,6 +285,7 @@ func importBigger(c *zanredisdb.ZanRedisClient) {
 
 				atomic.AddInt64(&success, 1)
 				rsp2, _ := redis.Int(destClient.Do("incrby", fk, diff))
+				// if synced to another cluster, should do decrby to avoid change to other cluster.
 				log.Printf("scanned %v, %d found bigger src:%v(dest:%v), value: %v, dest: %v, fixed to: %v\n",
 					atomic.LoadInt64(&cnt), atomic.LoadInt64(&success), string(k), string(fk), v, rsp, rsp2)
 			}
