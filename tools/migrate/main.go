@@ -117,7 +117,7 @@ func getAndWriteWithNxEx(c *zanredisdb.ZanRedisClient, destClient redis.Conn,
 	}
 }
 
-func importHandler(c *zanredisdb.ZanRedisClient, destClient redis.Conn, k []byte, fk string) (bool, error) {
+func importKVHandler(c *zanredisdb.ZanRedisClient, destClient redis.Conn, k []byte, fk string) (bool, error) {
 	if !*ignoreExist {
 		ok, err := getAndWriteWithNxEx(c, destClient, k, fk, *ttl, false)
 		if err != nil {
@@ -141,11 +141,35 @@ func importHandler(c *zanredisdb.ZanRedisClient, destClient redis.Conn, k []byte
 	}
 }
 
-func importData(c *zanredisdb.ZanRedisClient) {
-	scanDataAndProcess(c, importHandler)
+func importHashHandler(c *zanredisdb.ZanRedisClient, destClient redis.Conn, k []byte, fk string) (bool, error) {
+	srcv, err := redis.Values(doCommand(c, "hgetall", k))
+	if err != nil {
+		log.Printf("error while get from source %v, err: %v\n", string(k), err.Error())
+		return false, err
+	}
+	args := make([]interface{}, 0, len(srcv)+1)
+	args = append(args, fk)
+	args = append(args, srcv...)
+	rsp, err := redis.String(destClient.Do("hmset", args...))
+	if rsp == "OK" {
+		return true, nil
+	} else if err != nil {
+		log.Printf("error hmset %v, %v, : %v\n", string(k), string(fk), err.Error())
+	}
+	return false, err
 }
 
-func compareHandler(c *zanredisdb.ZanRedisClient, destClient redis.Conn, srck []byte, destK string) (bool, error) {
+func importData(c *zanredisdb.ZanRedisClient) {
+	if *dataType == "kv" {
+		scanDataAndProcess(c, importKVHandler)
+	} else if *dataType == "hash" {
+		scanDataAndProcess(c, importHashHandler)
+	} else {
+		log.Printf("unsupported import type: %v", *dataType)
+	}
+}
+
+func compareKVHandler(c *zanredisdb.ZanRedisClient, destClient redis.Conn, srck []byte, destK string) (bool, error) {
 	srcv, err := c.KVGet(*table, srck)
 	if err != nil {
 		log.Printf("error while get from source %v, err: %v\n", string(srck), err.Error())
@@ -167,14 +191,94 @@ func compareHandler(c *zanredisdb.ZanRedisClient, destClient redis.Conn, srck []
 	}
 }
 
+func compareHashHandler(c *zanredisdb.ZanRedisClient, destClient redis.Conn, srck []byte, destK string) (bool, error) {
+	srcv, err := redis.Values(doCommand(c, "hgetall", srck))
+	if err != nil {
+		log.Printf("error while get from source %v, err: %v\n", string(srck), err.Error())
+		return false, err
+	}
+	rsp, err := redis.Values(destClient.Do("hgetall", destK))
+	if err != nil {
+		log.Printf("error get dest %v, %v, err: %v\n", string(srck), string(destK), err.Error())
+		return false, err
+	}
+	matched := true
+	if len(srcv) == len(rsp) {
+		for i, v := range srcv {
+			hv, _ := redis.Bytes(v, nil)
+			hv2, _ := redis.Bytes(rsp[i], nil)
+			if !bytes.Equal(hv, hv2) {
+				matched = false
+				break
+			}
+		}
+	} else {
+		matched = false
+	}
+	if matched {
+		return true, nil
+	} else {
+		log.Printf("hash key mismatch :%v(dest:%v), value: %v, %v\n",
+			string(srck), string(destK),
+			srcv, rsp,
+		)
+		return false, nil
+	}
+}
+
+func compareSetHandler(c *zanredisdb.ZanRedisClient, destClient redis.Conn, srck []byte, destK string) (bool, error) {
+	srcv, err := redis.Values(doCommand(c, "smembers", srck))
+	if err != nil {
+		log.Printf("error while get from source %v, err: %v\n", string(srck), err.Error())
+		return false, err
+	}
+	rsp, err := redis.Values(destClient.Do("smembers", destK))
+	if err != nil {
+		log.Printf("error get dest %v, %v, err: %v\n", string(srck), string(destK), err.Error())
+		return false, err
+	}
+	matched := true
+	if len(srcv) == len(rsp) {
+		for i, v := range srcv {
+			hv, _ := redis.Bytes(v, nil)
+			hv2, _ := redis.Bytes(rsp[i], nil)
+			if !bytes.Equal(hv, hv2) {
+				matched = false
+				break
+			}
+		}
+	} else {
+		matched = false
+	}
+	if matched {
+		return true, nil
+	} else {
+		log.Printf("set key mismatch :%v(dest:%v), value: %v, %v\n",
+			string(srck), string(destK),
+			srcv, rsp,
+		)
+		return false, nil
+	}
+}
+
 func compareData(c *zanredisdb.ZanRedisClient) {
-	scanDataAndProcess(c, compareHandler)
+	log.Printf("begin compare %v\n", *table)
+	if *dataType == "kv" {
+		scanDataAndProcess(c, compareKVHandler)
+	} else if *dataType == "hash" {
+		scanDataAndProcess(c, compareHashHandler)
+	} else if *dataType == "set" {
+		scanDataAndProcess(c, compareSetHandler)
+	} else {
+		log.Printf("unsupported type: %v", *dataType)
+	}
 }
 
 func scanDataAndProcess(c *zanredisdb.ZanRedisClient, processFunc Handler) {
 	stopC := make(chan struct{})
 	defer close(stopC)
-	if *dataType != "kv" {
+	// TODO: support hash and set
+	if *dataType != "kv" && *dataType != "hash" {
 		log.Printf("data type not supported %v\n", *dataType)
 		return
 	}
@@ -188,14 +292,13 @@ func scanDataAndProcess(c *zanredisdb.ZanRedisClient, processFunc Handler) {
 		writeTable = *table
 	}
 
-	ch := c.KVScanChannel(*table, stopC)
+	ch := c.AdvScanChannel(*dataType, *table, stopC)
 	cnt := int64(0)
 	success := int64(0)
 	defer func() {
 		log.Printf("total scanned %v, success: %v\n", atomic.LoadInt64(&cnt),
 			atomic.LoadInt64(&success))
 	}()
-	log.Printf("begin compare %v\n", *table)
 	var wg sync.WaitGroup
 	for i := 0; i < *concurrency; i++ {
 		wg.Add(1)
