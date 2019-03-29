@@ -16,7 +16,7 @@ import (
 
 var ip = flag.String("ip", "127.0.0.1", "pd server ip")
 var port = flag.Int("port", 18001, "pd server port")
-var checkMode = flag.String("mode", "", "supported check-list/fix-list/dump-keys/import-noexist/import-bigger/checkrem-zset")
+var checkMode = flag.String("mode", "", "supported check-list/fix-list/import-bigger/checkrem-zset")
 var dataType = flag.String("data-type", "kv", "data type support kv/hash/list/zset/set")
 var namespace = flag.String("namespace", "default", "the prefix namespace")
 var table = flag.String("table", "test", "the table to write")
@@ -111,104 +111,6 @@ func checkList(tryFix bool, c *zanredisdb.ZanRedisClient) {
 			}
 		}
 	}
-}
-
-func dumpKeys(c *zanredisdb.ZanRedisClient) {
-	stopC := make(chan struct{})
-	defer close(stopC)
-	if *dataType != "kv" && *dataType != "hash" && *dataType != "list" && *dataType != "set" && *dataType != "zset" {
-		log.Printf("data type not supported %v\n", *dataType)
-		return
-	}
-	ch := c.AdvScanChannel(*dataType, *table, stopC)
-	cnt := int64(0)
-	defer func() {
-		log.Printf("total scanned %v", cnt)
-	}()
-	log.Printf("begin checking")
-	for k := range ch {
-		cnt++
-		if cnt > *maxNum {
-			break
-		}
-		if cnt%100 == 0 {
-			if *sleep > 0 {
-				time.Sleep(*sleep)
-			}
-		}
-		log.Printf("%s\n", string(k))
-	}
-}
-
-func importNoexist(c *zanredisdb.ZanRedisClient) {
-	stopC := make(chan struct{})
-	defer close(stopC)
-	if *dataType != "kv" {
-		log.Printf("data type not supported %v\n", *dataType)
-		return
-	}
-
-	writeNs := *destNamespace
-	writeTable := *destTable
-	if writeNs == "" {
-		writeNs = *namespace
-	}
-	if writeTable == "" {
-		writeTable = *table
-	}
-
-	ch := c.KVScanChannel(*table, stopC)
-	cnt := int64(0)
-	success := int64(0)
-	defer func() {
-		log.Printf("total scanned %v, success: %v\n", cnt, success)
-	}()
-	log.Printf("begin import %v\n", *table)
-	var wg sync.WaitGroup
-	for i := 0; i < *concurrency; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			defer func() {
-				log.Printf("one scanned done\n")
-			}()
-			proxyAddr := fmt.Sprintf("%s:%d", *destIP, *destPort)
-			destClient, err := redis.Dial("tcp", proxyAddr)
-			if err != nil {
-				log.Printf("failed init dest proxy: %v, %v", proxyAddr, err.Error())
-				return
-			}
-			defer destClient.Close()
-			for k := range ch {
-				atomic.AddInt64(&cnt, 1)
-				if *maxNum > 0 && atomic.LoadInt64(&cnt) > *maxNum {
-					break
-				}
-				fk := fmt.Sprintf("%s:%s:%s", writeNs, writeTable, string(k))
-				rsp, err := redis.Int(destClient.Do("exists", fk))
-				if err != nil {
-					log.Printf("error exists %v, %v, err: %v\n", string(k), string(fk), err.Error())
-					continue
-				}
-				if rsp == 1 {
-					continue
-				}
-				v, err := c.KVGet(*table, k)
-				if err != nil {
-					continue
-				}
-				rsp, err = redis.Int(destClient.Do("setnx", fk, v))
-				if rsp == 1 {
-					atomic.AddInt64(&success, 1)
-					log.Printf("scanned %v, %d success setnx src:%v(dest:%v), value: %v\n",
-						atomic.LoadInt64(&cnt), atomic.LoadInt64(&success), string(k), string(fk), string(v))
-				} else if err != nil {
-					log.Printf("error setnx %v, %v, : %v\n", string(k), string(fk), err.Error())
-				}
-			}
-		}()
-	}
-	wg.Wait()
 }
 
 func importBigger(c *zanredisdb.ZanRedisClient) {
@@ -444,10 +346,6 @@ func main() {
 			checkList(false, c)
 		case "fix-list":
 			checkList(true, c)
-		case "dump-keys":
-			dumpKeys(c)
-		case "import-noexist":
-			importNoexist(c)
 		case "import-bigger":
 			importBigger(c)
 		case "checkrem-zset":

@@ -279,7 +279,7 @@ func benchPFAdd() {
 		rn := rand.Int()
 		n := int64(rn % *number)
 		pk := n / subKeyCnt
-		tmp := fmt.Sprintf("pf_%010d", int(pk))
+		tmp := fmt.Sprintf("%010d", int(pk))
 		subkey := n - pk*subKeyCnt
 		return doCommand(c, "PFADD", tmp, subkey, rn)
 	}
@@ -290,7 +290,7 @@ func benchPFCount() {
 	f := func(c *zanredisdb.ZanRedisClient) error {
 		n := int64(rand.Int() % *number)
 		pk := n % int64(*primaryKeyCnt)
-		tmp := fmt.Sprintf("pf_%010d", int(pk))
+		tmp := fmt.Sprintf("%010d", int(pk))
 		return doCommand(c, "PFCOUNT", tmp)
 	}
 	bench("PFCOUNT", f)
