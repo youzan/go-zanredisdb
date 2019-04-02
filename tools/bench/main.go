@@ -23,7 +23,7 @@ var clients = flag.Int("c", 10, "number of clients")
 var round = flag.Int("r", 1, "benchmark round number")
 var logLevel = flag.Int("loglevel", 1, "log level")
 var valueSize = flag.Int("vsize", 100, "kv value size")
-var tests = flag.String("t", "set,get", "only run the comma separated list of tests(supported randget,del,lpush,rpush,lrange,lpop,rpop,hset,randhget,hget,hdel,sadd,sismember,srem,zadd,zrange,zrevrange,zdel)")
+var tests = flag.String("t", "set,get", "only run the comma separated list of tests(supported randget,del,lpush,rpush,lrange,lpop,rpop,hset,randhget,hget,hdel,sadd,sismember,srem,zadd,zrange,zrevrange,zdel,zrem, zremrangebyscore)")
 var primaryKeyCnt = flag.Int("pkn", 100, "primary key count for kv,hash,list,set,zset")
 var namespace = flag.String("namespace", "default", "the prefix namespace")
 var table = flag.String("table", "test", "the table to write")
@@ -617,6 +617,22 @@ func benchZRem() {
 	bench("zrem", f)
 }
 
+func benchZRemRangeByScore() {
+	atomic.StoreInt64(&zsetPKBase, 0)
+	subKeyCnt := int64(*number / (*primaryKeyCnt))
+	f := func(c *zanredisdb.ZanRedisClient) error {
+		n := atomic.AddInt64(&zsetPKBase, 1)
+		pk := n / subKeyCnt
+		if n%5 != 0 {
+			return nil
+		}
+		tmp := fmt.Sprintf("%010d", int(pk))
+		return doCommand(c, "ZREMRANGEBYSCORE", "myzsetkey"+tmp, 0, rand.Int())
+	}
+
+	bench("zremrangebyscore", f)
+}
+
 func benchZRangeByScore() {
 	atomic.StoreInt64(&zsetPKBase, 0)
 	subKeyCnt := int64(*number / (*primaryKeyCnt))
@@ -765,6 +781,8 @@ func main() {
 				benchZRevRangeByScore()
 			case "zrem":
 				benchZRem()
+			case "zremrangebyscore":
+				benchZRemRangeByScore()
 			}
 		}
 		println("")
