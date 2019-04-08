@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"flag"
 	"fmt"
 	"log"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,6 +29,7 @@ var logDetail = flag.Bool("logdetail", true, "log keys while migrate")
 var ignoreExist = flag.Bool("ignore_exist", true, "ignore exist keys in dest while migrate")
 var ttl = flag.Int("ttl", 0, "the default ttl for dest")
 
+var keysFile = flag.String("keys_file", "", "keys file to import or compare, if no do scan whole set")
 var concurrency = flag.Int("concurrency", 1, "concurrency for task")
 
 var destIP = flag.String("dest_ip", "", "dest proxy ip")
@@ -274,7 +277,85 @@ func compareData(c *zanredisdb.ZanRedisClient) {
 	}
 }
 
+func scanKeysFileAndProcess(c *zanredisdb.ZanRedisClient, processFunc Handler) {
+	f, err := os.Open(*keysFile)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	defer f.Close()
+	if *dataType != "kv" && *dataType != "hash" {
+		log.Printf("data type not supported %v\n", *dataType)
+		return
+	}
+
+	writeNs := *destNamespace
+	writeTable := *destTable
+	if writeNs == "" {
+		writeNs = *namespace
+	}
+	if writeTable == "" {
+		writeTable = *table
+	}
+	proxyAddr := fmt.Sprintf("%s:%d", *destIP, *destPort)
+	destClient, err := redis.Dial("tcp", proxyAddr)
+	if err != nil {
+		log.Printf("failed init dest proxy: %v, %v", proxyAddr, err.Error())
+		return
+	}
+	defer destClient.Close()
+	cnt := int64(0)
+	success := int64(0)
+	defer func() {
+		log.Printf("total scanned %v, success: %v\n", atomic.LoadInt64(&cnt),
+			atomic.LoadInt64(&success))
+	}()
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		subs := strings.SplitN(line, ":", 3)
+		var k string
+		if len(subs) == 3 {
+			k = subs[2]
+		} else if len(subs) == 2 {
+			k = subs[1]
+		} else {
+			log.Printf("invalid key %v\n", string(line))
+			continue
+		}
+
+		atomic.AddInt64(&cnt, 1)
+		if *maxNum > 0 && atomic.LoadInt64(&cnt) > *maxNum {
+			break
+		}
+		fk := fmt.Sprintf("%s:%s:%s", writeNs, writeTable, string(k))
+		ok, err := processFunc(c, destClient, []byte(k), fk)
+		if ok {
+			atomic.AddInt64(&success, 1)
+			if *logDetail {
+				log.Printf("scanned %v, %d success key src:%v(dest:%v)\n",
+					atomic.LoadInt64(&cnt), atomic.LoadInt64(&success), string(k), string(fk))
+			}
+		} else if err != nil {
+			log.Printf("scanned %v, %d success, key :%v(dest:%v), err: %v\n",
+				atomic.LoadInt64(&cnt), atomic.LoadInt64(&success), string(k), string(fk),
+				err.Error(),
+			)
+		} else if *logDetail {
+			log.Printf("scanned %v, %d success\n",
+				atomic.LoadInt64(&cnt), atomic.LoadInt64(&success))
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		log.Println(err)
+	}
+}
+
 func scanDataAndProcess(c *zanredisdb.ZanRedisClient, processFunc Handler) {
+	if *keysFile != "" {
+		scanKeysFileAndProcess(c, processFunc)
+		return
+	}
 	stopC := make(chan struct{})
 	defer close(stopC)
 	// TODO: support hash and set
