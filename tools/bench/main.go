@@ -594,9 +594,6 @@ func benchZAdd() {
 		subkey := n - pk*subKeyCnt
 		member := strconv.Itoa(int(subkey))
 		member += tmp
-		ts := time.Now().String()
-		member = member + ts
-
 		return doCommand(c, "ZADD", "myzsetkey"+tmp, subkey, member)
 	}
 
@@ -611,7 +608,9 @@ func benchZRem() {
 		pk := n / subKeyCnt
 		tmp := fmt.Sprintf("%010d", int(pk))
 		subkey := n - pk*subKeyCnt
-		return doCommand(c, "ZREM", "myzsetkey"+tmp, subkey)
+		member := strconv.Itoa(int(subkey))
+		member += tmp
+		return doCommand(c, "ZREM", "myzsetkey"+tmp, member)
 	}
 
 	bench("zrem", f)
@@ -627,7 +626,7 @@ func benchZRemRangeByScore() {
 			return nil
 		}
 		tmp := fmt.Sprintf("%010d", int(pk))
-		return doCommand(c, "ZREMRANGEBYSCORE", "myzsetkey"+tmp, 0, rand.Int())
+		return doCommand(c, "ZREMRANGEBYSCORE", "myzsetkey"+tmp, 0, rand.Int()%int(subKeyCnt))
 	}
 
 	bench("zremrangebyscore", f)
@@ -643,7 +642,7 @@ func benchZRangeByScore() {
 			return nil
 		}
 		tmp := fmt.Sprintf("%010d", int(pk))
-		return doCommand(c, "ZRANGEBYSCORE", "myzsetkey"+tmp, 0, rand.Int(), "limit", rand.Int()%100, 100)
+		return doCommand(c, "ZRANGEBYSCORE", "myzsetkey"+tmp, 0, rand.Int()%int(subKeyCnt), "limit", rand.Int()%100, 100)
 	}
 
 	bench("zrangebyscore", f)
@@ -675,7 +674,7 @@ func benchZRevRangeByScore() {
 			return nil
 		}
 		tmp := fmt.Sprintf("%010d", int(pk))
-		return doCommand(c, "ZREVRANGEBYSCORE", "myzsetkey"+tmp, 0, rand.Int(), "limit", rand.Int()%100, 100)
+		return doCommand(c, "ZREVRANGEBYSCORE", "myzsetkey"+tmp, 0, rand.Int()%int(subKeyCnt), "limit", rand.Int()%100, 100)
 	}
 
 	bench("zrevrangebyscore", f)
