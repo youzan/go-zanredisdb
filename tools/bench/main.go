@@ -69,6 +69,9 @@ func doCommand(client *zanredisdb.ZanRedisClient, cmd string, args ...interface{
 	} else {
 		index = 29
 	}
+	if index >= 10 {
+		fmt.Printf("do %s (%v) slow %v, %v\n", cmd, args[0], cost, time.Now().String())
+	}
 	atomic.AddInt64(&latencyDistribute[index], 1)
 	return nil
 }

@@ -12,7 +12,10 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"errors"
 
+	as "github.com/absolute8511/aerospike-client-go"
+	"github.com/absolute8511/aerospike-client-go/types"
 	"github.com/absolute8511/redigo/redis"
 	"github.com/youzan/go-zanredisdb"
 )
@@ -32,12 +35,18 @@ var ttl = flag.Int("ttl", 0, "the default ttl for dest")
 var keysFile = flag.String("keys_file", "", "keys file to import or compare, if no do scan whole set")
 var concurrency = flag.Int("concurrency", 1, "concurrency for task")
 
+var useProxy = flag.Bool("use_proxy", true, "use proxy as dest (by default) or aerospike")
 var destIP = flag.String("dest_ip", "", "dest proxy ip")
 var destPort = flag.Int("dest_port", 3803, "dest proxy port")
 var destNamespace = flag.String("dest_namespace", "", "the prefix namespace")
 var destTable = flag.String("dest_table", "", "the table to write")
 
-type Handler func(c *zanredisdb.ZanRedisClient, destClient redis.Conn, srck []byte, destK string) (bool, error)
+type Handler func(c *zanredisdb.ZanRedisClient, destClient redis.Conn, asClient *as.Client, 
+	srck []byte, destK string, askey *as.Key) (bool, error)
+
+const (
+	singleBinName = "redisvalue"
+)
 
 func doCommand(client *zanredisdb.ZanRedisClient, cmd string, args ...interface{}) (interface{}, error) {
 	v := args[0]
@@ -120,7 +129,37 @@ func getAndWriteWithNxEx(c *zanredisdb.ZanRedisClient, destClient redis.Conn,
 	}
 }
 
-func importKVHandler(c *zanredisdb.ZanRedisClient, destClient redis.Conn, k []byte, fk string) (bool, error) {
+func getAndWriteASWithNxEx(c *zanredisdb.ZanRedisClient, asClient *as.Client,
+	srck []byte, askey *as.Key, ttl int, nx bool) (bool, error) {
+	v, err := c.KVGet(*table, srck)
+	if err != nil {
+		log.Printf("error while get from source %v, err: %v\n", string(srck), err.Error())
+		return false, err
+	}
+	if v == nil {
+		return false, nil
+	}
+	wp := as.NewWritePolicy(0, 0)
+	wp.SendKey = true
+	bin := as.NewBin(singleBinName, v)
+	wp.Expiration = uint32(ttl)
+	if nx {
+		wp.RecordExistsAction = as.CREATE_ONLY
+	}
+	err = asClient.PutBins(wp, askey, bin)
+	if err != nil {
+		if asErr, ok := err.(types.AerospikeError); ok {
+			if asErr.ResultCode() == types.KEY_EXISTS_ERROR  {
+				return false, nil
+			}
+		}
+	}
+	return true, err
+}
+
+func importKVHandler(c *zanredisdb.ZanRedisClient, destClient redis.Conn, 
+	asClient *as.Client, k []byte, fk string, askey *as.Key) (bool, error) {
+	if destClient != nil {
 	if !*ignoreExist {
 		ok, err := getAndWriteWithNxEx(c, destClient, k, fk, *ttl, false)
 		if err != nil {
@@ -142,9 +181,36 @@ func importKVHandler(c *zanredisdb.ZanRedisClient, destClient redis.Conn, k []by
 		}
 		return ok, err
 	}
+	} else {
+	if !*ignoreExist {
+		ok, err := getAndWriteASWithNxEx(c, asClient, k, askey, *ttl, false)
+		if err != nil {
+			log.Printf("error setnx %v, %v, : %v\n", string(k), string(fk), err.Error())
+		}
+		return ok, err
+	} else {
+		rsp, err := asClient.Exists(nil, askey)
+		if err != nil {
+			log.Printf("error exists %v, %v, err: %v\n", string(k), string(fk), err.Error())
+			return false, err
+		}
+		if rsp {
+			return false, nil
+		}
+		ok, err := getAndWriteASWithNxEx(c, asClient, k, askey, *ttl, true)
+		if err != nil {
+			log.Printf("error setnx %v, %v, : %v\n", string(k), string(fk), err.Error())
+		}
+		return ok, err
+	}
+	}
 }
 
-func importHashHandler(c *zanredisdb.ZanRedisClient, destClient redis.Conn, k []byte, fk string) (bool, error) {
+func importHashHandler(c *zanredisdb.ZanRedisClient, destClient redis.Conn, asClient *as.Client, 
+	k []byte, fk string, askey *as.Key) (bool, error) {
+	if destClient == nil {
+		return false, errors.New("only redis supported for hash")
+	}
 	srcv, err := redis.Values(doCommand(c, "hgetall", k))
 	if err != nil {
 		log.Printf("error while get from source %v, err: %v\n", string(k), err.Error())
@@ -172,7 +238,9 @@ func importData(c *zanredisdb.ZanRedisClient) {
 	}
 }
 
-func compareKVHandler(c *zanredisdb.ZanRedisClient, destClient redis.Conn, srck []byte, destK string) (bool, error) {
+func compareKVHandler(c *zanredisdb.ZanRedisClient, 
+	destClient redis.Conn, asClient *as.Client, 
+	srck []byte, destK string, askey *as.Key) (bool, error) {
 	srcv, err := c.KVGet(*table, srck)
 	if err != nil {
 		log.Printf("error while get from source %v, err: %v\n", string(srck), err.Error())
@@ -194,7 +262,8 @@ func compareKVHandler(c *zanredisdb.ZanRedisClient, destClient redis.Conn, srck 
 	}
 }
 
-func compareHashHandler(c *zanredisdb.ZanRedisClient, destClient redis.Conn, srck []byte, destK string) (bool, error) {
+func compareHashHandler(c *zanredisdb.ZanRedisClient, destClient redis.Conn, asClient *as.Client,
+	 srck []byte, destK string, askey *as.Key) (bool, error) {
 	srcv, err := redis.Values(doCommand(c, "hgetall", srck))
 	if err != nil {
 		log.Printf("error while get from source %v, err: %v\n", string(srck), err.Error())
@@ -229,7 +298,8 @@ func compareHashHandler(c *zanredisdb.ZanRedisClient, destClient redis.Conn, src
 	}
 }
 
-func compareSetHandler(c *zanredisdb.ZanRedisClient, destClient redis.Conn, srck []byte, destK string) (bool, error) {
+func compareSetHandler(c *zanredisdb.ZanRedisClient, destClient redis.Conn, asClient *as.Client, 
+	srck []byte, destK string, askey *as.Key) (bool, error) {
 	srcv, err := redis.Values(doCommand(c, "smembers", srck))
 	if err != nil {
 		log.Printf("error while get from source %v, err: %v\n", string(srck), err.Error())
@@ -298,12 +368,23 @@ func scanKeysFileAndProcess(c *zanredisdb.ZanRedisClient, processFunc Handler) {
 		writeTable = *table
 	}
 	proxyAddr := fmt.Sprintf("%s:%d", *destIP, *destPort)
-	destClient, err := redis.Dial("tcp", proxyAddr)
-	if err != nil {
-		log.Printf("failed init dest proxy: %v, %v", proxyAddr, err.Error())
-		return
+			var destClient redis.Conn
+			var asClient *as.Client
+	if *useProxy {
+		destClient, err = redis.Dial("tcp", proxyAddr)
+		if err != nil {
+			log.Printf("failed init dest proxy: %v, %v", proxyAddr, err.Error())
+			return
+		}
+		defer destClient.Close()
+	} else {
+		asClient, err = as.NewClient(*destIP, *destPort)
+		if err != nil {
+			log.Printf("failed init dest proxy: %v, %v", proxyAddr, err.Error())
+			return
+		}
+		defer asClient.Close()
 	}
-	defer destClient.Close()
 	cnt := int64(0)
 	success := int64(0)
 	defer func() {
@@ -329,7 +410,8 @@ func scanKeysFileAndProcess(c *zanredisdb.ZanRedisClient, processFunc Handler) {
 			break
 		}
 		fk := fmt.Sprintf("%s:%s:%s", writeNs, writeTable, string(k))
-		ok, err := processFunc(c, destClient, []byte(k), fk)
+				askey, _ := as.NewKey(writeNs, writeTable, string(k))
+		ok, err := processFunc(c, destClient, asClient, []byte(k), fk, askey)
 		if ok {
 			atomic.AddInt64(&success, 1)
 			if *logDetail {
@@ -389,19 +471,31 @@ func scanDataAndProcess(c *zanredisdb.ZanRedisClient, processFunc Handler) {
 				log.Printf("one scanned done\n")
 			}()
 			proxyAddr := fmt.Sprintf("%s:%d", *destIP, *destPort)
-			destClient, err := redis.Dial("tcp", proxyAddr)
-			if err != nil {
-				log.Printf("failed init dest proxy: %v, %v", proxyAddr, err.Error())
-				return
+			var destClient redis.Conn
+			var asClient *as.Client
+			var err error
+			if *useProxy {
+				destClient, err = redis.Dial("tcp", proxyAddr)
+				if err != nil {
+					log.Printf("failed init dest proxy: %v, %v", proxyAddr, err.Error())
+					return
+				}
+				defer destClient.Close()
+			} else {
+				asClient, err = as.NewClient(*destIP, *destPort)
+				if err != nil {
+					log.Printf("failed init dest aerospike: %v, %v", proxyAddr, err.Error())
+					return
+				}
 			}
-			defer destClient.Close()
 			for k := range ch {
 				atomic.AddInt64(&cnt, 1)
 				if *maxNum > 0 && atomic.LoadInt64(&cnt) > *maxNum {
 					break
 				}
 				fk := fmt.Sprintf("%s:%s:%s", writeNs, writeTable, string(k))
-				ok, err := processFunc(c, destClient, k, fk)
+				askey, _ := as.NewKey(writeNs, writeTable, string(k))
+				ok, err := processFunc(c, destClient, asClient, k, fk, askey)
 				if ok {
 					atomic.AddInt64(&success, 1)
 					if *logDetail {
