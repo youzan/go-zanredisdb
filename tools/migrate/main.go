@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -33,37 +32,70 @@ var ttl = flag.Int("ttl", 0, "the default ttl for dest")
 var keysFile = flag.String("keys_file", "", "keys file to import or compare, if no do scan whole set")
 var concurrency = flag.Int("concurrency", 1, "concurrency for task")
 
+var destZanPD = flag.String("dest_zanpd_ip", "", "dest pd server ip")
+var destZanPDPort = flag.Int("dest_zanpd_port", 0, "dest pd server port")
+
 var destIP = flag.String("dest_ip", "", "dest proxy ip")
 var destPort = flag.Int("dest_port", 3803, "dest proxy port")
+
 var destNamespace = flag.String("dest_namespace", "", "the prefix namespace")
 var destTable = flag.String("dest_table", "", "the table to write")
+
+var destZanClient *zanredisdb.ZanRedisClient
 
 type Handler func(c *zanredisdb.ZanRedisClient, destClient redis.Conn,
 	srck []byte, destK string) (bool, error)
 
-const (
-	singleBinName = "redisvalue"
-)
-
-func doCommand(client *zanredisdb.ZanRedisClient, cmd string, args ...interface{}) (interface{}, error) {
+func doCommand(client *zanredisdb.ZanRedisClient, ns string, table string, cmd string, args ...interface{}) (interface{}, error) {
 	v := args[0]
-	prefix := *namespace + ":" + *table + ":"
-	sharding := ""
+	var rk string
 	switch vt := v.(type) {
 	case string:
-		sharding = *table + ":" + vt
-		args[0] = prefix + vt
+		rk = vt
 	case []byte:
-		sharding = *table + ":" + string(vt)
-		args[0] = []byte(prefix + string(vt))
+		rk = string(vt)
 	case int:
-		sharding = *table + ":" + strconv.Itoa(vt)
-		args[0] = prefix + strconv.Itoa(vt)
+		rk = strconv.Itoa(vt)
 	case int64:
-		sharding = *table + ":" + strconv.Itoa(int(vt))
-		args[0] = prefix + strconv.Itoa(int(vt))
+		rk = strconv.Itoa(int(vt))
 	}
-	rsp, err := client.DoRedis(strings.ToUpper(cmd), []byte(sharding), true, args...)
+	var pk *zanredisdb.PKey
+	var err error
+	pk, err = zanredisdb.ParsePKey(rk)
+	if err != nil {
+		pk = zanredisdb.NewPKey(ns, table, []byte(rk))
+	} else {
+		pk.Namespace = ns
+		pk.Set = table
+	}
+	args[0] = pk.RawKey
+	rsp, err := client.DoRedis(strings.ToUpper(cmd), pk.ShardingKey(), true, args...)
+	if err != nil {
+		log.Printf("do %s (%v) error %s\n", cmd, args[0], err.Error())
+		return rsp, err
+	}
+	return rsp, nil
+}
+
+func doCommandToAnyDest(rc redis.Conn, zc *zanredisdb.ZanRedisClient, cmd string, args ...interface{}) (interface{}, error) {
+	if zc == nil {
+		return rc.Do(cmd, args...)
+	}
+	v := args[0]
+	var rk string
+	switch vt := v.(type) {
+	case string:
+		rk = vt
+	case []byte:
+		rk = string(vt)
+	}
+	var pk *zanredisdb.PKey
+	var err error
+	pk, err = zanredisdb.ParsePKey(rk)
+	if err != nil {
+		return nil, err
+	}
+	rsp, err := zc.DoRedis(strings.ToUpper(cmd), pk.ShardingKey(), true, args...)
 	if err != nil {
 		log.Printf("do %s (%v) error %s\n", cmd, args[0], err.Error())
 		return rsp, err
@@ -109,18 +141,18 @@ func getAndWriteWithNxEx(c *zanredisdb.ZanRedisClient, destClient redis.Conn,
 	}
 	if ttl <= 0 {
 		if !nx {
-			rsp, err := redis.String(destClient.Do("set", fk, v))
+			rsp, err := redis.String(doCommandToAnyDest(destClient, destZanClient, "set", fk, v))
 			return rsp == "OK", err
 		} else {
-			rsp, err := redis.Int(destClient.Do("setnx", fk, v))
+			rsp, err := redis.Int(doCommandToAnyDest(destClient, destZanClient, "setnx", fk, v))
 			return rsp == 1, err
 		}
 	} else {
 		if !nx {
-			rsp, err := redis.String(destClient.Do("setex", fk, ttl, v))
+			rsp, err := redis.String(doCommandToAnyDest(destClient, destZanClient, "setex", fk, ttl, v))
 			return rsp == "OK", err
 		} else {
-			rsp, err := redis.String(destClient.Do("set", fk, v, "EX", ttl, "NX"))
+			rsp, err := redis.String(doCommandToAnyDest(destClient, destZanClient, "set", fk, v, "EX", ttl, "NX"))
 			return rsp == "OK", err
 		}
 	}
@@ -137,10 +169,7 @@ func importKVHandler(c *zanredisdb.ZanRedisClient, destClient redis.Conn,
 
 func importHashHandler(c *zanredisdb.ZanRedisClient, destClient redis.Conn,
 	k []byte, fk string) (bool, error) {
-	if destClient == nil {
-		return false, errors.New("only redis supported for hash")
-	}
-	srcv, err := redis.Values(doCommand(c, "hgetall", k))
+	srcv, err := redis.Values(doCommand(c, *namespace, *table, "hgetall", k))
 	if err != nil {
 		log.Printf("error while get from source %v, err: %v\n", string(k), err.Error())
 		return false, err
@@ -148,7 +177,7 @@ func importHashHandler(c *zanredisdb.ZanRedisClient, destClient redis.Conn,
 	args := make([]interface{}, 0, len(srcv)+1)
 	args = append(args, fk)
 	args = append(args, srcv...)
-	rsp, err := redis.String(destClient.Do("hmset", args...))
+	rsp, err := redis.String(doCommandToAnyDest(destClient, destZanClient, "hmset", args...))
 	if rsp == "OK" {
 		return true, nil
 	} else if err != nil {
@@ -157,11 +186,31 @@ func importHashHandler(c *zanredisdb.ZanRedisClient, destClient redis.Conn,
 	return false, err
 }
 
+func importSetHandler(c *zanredisdb.ZanRedisClient, destClient redis.Conn,
+	k []byte, fk string) (bool, error) {
+	srcv, err := redis.Values(doCommand(c, *namespace, *table, "smembers", k))
+	if err != nil {
+		log.Printf("error while get from source %v, err: %v\n", string(k), err.Error())
+		return false, err
+	}
+	args := make([]interface{}, 0, len(srcv)+1)
+	args = append(args, fk)
+	args = append(args, srcv...)
+	_, err = doCommandToAnyDest(destClient, destZanClient, "sadd", args...)
+	if err != nil {
+		log.Printf("error sadd %v, %v, : %v\n", string(k), string(fk), err.Error())
+		return false, err
+	}
+	return true, err
+}
+
 func importData(c *zanredisdb.ZanRedisClient) {
 	if *dataType == "kv" {
 		scanDataAndProcess(c, importKVHandler)
 	} else if *dataType == "hash" {
 		scanDataAndProcess(c, importHashHandler)
+	} else if *dataType == "set" {
+		scanDataAndProcess(c, importSetHandler)
 	} else {
 		log.Printf("unsupported import type: %v", *dataType)
 	}
@@ -175,7 +224,7 @@ func compareKVHandler(c *zanredisdb.ZanRedisClient,
 		log.Printf("error while get from source %v, err: %v\n", string(srck), err.Error())
 		return false, err
 	}
-	rsp, err := redis.Bytes(destClient.Do("get", destK))
+	rsp, err := redis.Bytes(doCommandToAnyDest(destClient, destZanClient, "get", destK))
 	if err != nil {
 		log.Printf("error get dest %v, %v, err: %v\n", string(srck), string(destK), err.Error())
 		return false, err
@@ -193,12 +242,12 @@ func compareKVHandler(c *zanredisdb.ZanRedisClient,
 
 func compareHashHandler(c *zanredisdb.ZanRedisClient, destClient redis.Conn,
 	srck []byte, destK string) (bool, error) {
-	srcv, err := redis.Values(doCommand(c, "hgetall", srck))
+	srcv, err := redis.Values(doCommand(c, *namespace, *table, "hgetall", srck))
 	if err != nil {
 		log.Printf("error while get from source %v, err: %v\n", string(srck), err.Error())
 		return false, err
 	}
-	rsp, err := redis.Values(destClient.Do("hgetall", destK))
+	rsp, err := redis.Values(doCommandToAnyDest(destClient, destZanClient, "hgetall", destK))
 	if err != nil {
 		log.Printf("error get dest %v, %v, err: %v\n", string(srck), string(destK), err.Error())
 		return false, err
@@ -229,12 +278,12 @@ func compareHashHandler(c *zanredisdb.ZanRedisClient, destClient redis.Conn,
 
 func compareSetHandler(c *zanredisdb.ZanRedisClient, destClient redis.Conn,
 	srck []byte, destK string) (bool, error) {
-	srcv, err := redis.Values(doCommand(c, "smembers", srck))
+	srcv, err := redis.Values(doCommand(c, *namespace, *table, "smembers", srck))
 	if err != nil {
 		log.Printf("error while get from source %v, err: %v\n", string(srck), err.Error())
 		return false, err
 	}
-	rsp, err := redis.Values(destClient.Do("smembers", destK))
+	rsp, err := redis.Values(doCommandToAnyDest(destClient, destZanClient, "smembers", destK))
 	if err != nil {
 		log.Printf("error get dest %v, %v, err: %v\n", string(srck), string(destK), err.Error())
 		return false, err
@@ -296,14 +345,16 @@ func scanKeysFileAndProcess(c *zanredisdb.ZanRedisClient, processFunc Handler) {
 	if writeTable == "" {
 		writeTable = *table
 	}
-	proxyAddr := fmt.Sprintf("%s:%d", *destIP, *destPort)
 	var destClient redis.Conn
-	destClient, err = redis.Dial("tcp", proxyAddr)
-	if err != nil {
-		log.Printf("failed init dest proxy: %v, %v", proxyAddr, err.Error())
-		return
+	if *destIP != "" {
+		proxyAddr := fmt.Sprintf("%s:%d", *destIP, *destPort)
+		destClient, err = redis.Dial("tcp", proxyAddr)
+		if err != nil {
+			log.Printf("failed init dest proxy: %v, %v", proxyAddr, err.Error())
+			return
+		}
+		defer destClient.Close()
 	}
-	defer destClient.Close()
 	cnt := int64(0)
 	success := int64(0)
 	defer func() {
@@ -359,7 +410,7 @@ func scanDataAndProcess(c *zanredisdb.ZanRedisClient, processFunc Handler) {
 	stopC := make(chan struct{})
 	defer close(stopC)
 	// TODO: support hash and set
-	if *dataType != "kv" && *dataType != "hash" {
+	if *dataType != "kv" && *dataType != "hash" && *dataType != "set" {
 		log.Printf("data type not supported %v\n", *dataType)
 		return
 	}
@@ -388,15 +439,17 @@ func scanDataAndProcess(c *zanredisdb.ZanRedisClient, processFunc Handler) {
 			defer func() {
 				log.Printf("one scanned done\n")
 			}()
-			proxyAddr := fmt.Sprintf("%s:%d", *destIP, *destPort)
 			var destClient redis.Conn
 			var err error
-			destClient, err = redis.Dial("tcp", proxyAddr)
-			if err != nil {
-				log.Printf("failed init dest proxy: %v, %v", proxyAddr, err.Error())
-				return
+			if *destIP != "" {
+				proxyAddr := fmt.Sprintf("%s:%d", *destIP, *destPort)
+				destClient, err = redis.Dial("tcp", proxyAddr)
+				if err != nil {
+					log.Printf("failed init dest proxy: %v, %v", proxyAddr, err.Error())
+					return
+				}
+				defer destClient.Close()
 			}
-			defer destClient.Close()
 
 			for k := range ch {
 				atomic.AddInt64(&cnt, 1)
@@ -426,79 +479,6 @@ func scanDataAndProcess(c *zanredisdb.ZanRedisClient, processFunc Handler) {
 	wg.Wait()
 }
 
-func importBigger(c *zanredisdb.ZanRedisClient) {
-	stopC := make(chan struct{})
-	defer close(stopC)
-	if *dataType != "kv" {
-		log.Printf("data type not supported %v\n", *dataType)
-		return
-	}
-
-	if *destIP == "" {
-		log.Printf("dest ip should be set\n")
-		return
-	}
-
-	writeNs := *destNamespace
-	writeTable := *destTable
-	if writeNs == "" {
-		writeNs = *namespace
-	}
-	if writeTable == "" {
-		writeTable = *table
-	}
-
-	ch := c.KVScanChannel(*table, stopC)
-	cnt := int64(0)
-	success := int64(0)
-	defer func() {
-		log.Printf("total scanned %v, success: %v\n", cnt, success)
-	}()
-	log.Printf("begin import %v\n", *table)
-	var wg sync.WaitGroup
-	for i := 0; i < *concurrency; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			defer func() {
-				log.Printf("one scanned done\n")
-			}()
-			proxyAddr := fmt.Sprintf("%s:%d", *destIP, *destPort)
-			destClient, err := redis.Dial("tcp", proxyAddr)
-			if err != nil {
-				log.Printf("failed init dest proxy: %v, %v", proxyAddr, err.Error())
-				return
-			}
-			defer destClient.Close()
-			for k := range ch {
-				atomic.AddInt64(&cnt, 1)
-				if *maxNum > 0 && atomic.LoadInt64(&cnt) > *maxNum {
-					break
-				}
-				v, err := redis.Int(c.KVGet(*table, k))
-				if err != nil {
-					continue
-				}
-				fk := fmt.Sprintf("%s:%s:%s", writeNs, writeTable, string(k))
-				_, err = redis.Int(destClient.Do("get", fk))
-				if err != nil {
-					if err == redis.ErrNil {
-						rsp, _ := redis.Int(destClient.Do("setnx", fk, v))
-						if rsp == 1 {
-							atomic.AddInt64(&success, 1)
-							log.Printf("scanned %v, setnx src:%v(dest:%v) to value: %v\n",
-								atomic.LoadInt64(&cnt), string(k), string(fk), v)
-						}
-
-					}
-					continue
-				}
-			}
-		}()
-	}
-	wg.Wait()
-}
-
 func main() {
 	flag.Parse()
 	zanredisdb.SetLogger(1, zanredisdb.NewSimpleLogger())
@@ -519,6 +499,26 @@ func main() {
 	}
 	c.Start()
 	defer c.Stop()
+	if *destZanPD != "" {
+		dconf := &zanredisdb.Conf{
+			DialTimeout:  time.Second * 15,
+			ReadTimeout:  0,
+			WriteTimeout: 0,
+			TendInterval: 10,
+			Namespace:    *destNamespace,
+		}
+		if dconf.Namespace == "" {
+			dconf.Namespace = *namespace
+		}
+		dconf.LookupList = append(dconf.LookupList, fmt.Sprintf("%s:%d", *destZanPD, *destZanPDPort))
+		destc, err := zanredisdb.NewZanRedisClient(dconf)
+		if err != nil {
+			panic(err)
+		}
+		destc.Start()
+		defer destc.Stop()
+		destZanClient = destc
+	}
 	for _, mode := range modeList {
 		switch strings.ToLower(mode) {
 		case "dump-keys":

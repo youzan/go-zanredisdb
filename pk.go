@@ -2,8 +2,28 @@ package zanredisdb
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"strings"
 )
+
+var ErrInvalidKey = errors.New("invalid key format")
+
+func ValidPrefix(k string) bool {
+	fields := strings.SplitN(k, ":", 3)
+	if len(fields) < 3 || len(fields[2]) <= 0 {
+		return false
+	}
+	return true
+}
+
+func ParsePKey(k string) (*PKey, error) {
+	fields := strings.SplitN(k, ":", 3)
+	if len(fields) < 3 || len(fields[2]) <= 0 {
+		return nil, ErrInvalidKey
+	}
+	return NewPKey(fields[0], fields[1], []byte(fields[2])), nil
+}
 
 type PKey struct {
 	Namespace string
