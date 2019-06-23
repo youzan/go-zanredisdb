@@ -329,6 +329,7 @@ type Cluster struct {
 	tendInterval int64
 	wg           sync.WaitGroup
 	quitC        chan struct{}
+	stopping     int32
 	tendTrigger  chan int
 
 	dialF            func(string) (redis.Conn, error)
@@ -972,7 +973,14 @@ func (cluster *Cluster) tendNodes() {
 	}
 }
 
+func (cluster *Cluster) IsStopped() bool {
+	return atomic.LoadInt32(&cluster.stopping) == 1
+}
+
 func (cluster *Cluster) Close() {
+	if !atomic.CompareAndSwapInt32(&cluster.stopping, 0, 1) {
+		return
+	}
 	close(cluster.quitC)
 	cluster.wg.Wait()
 	cluster.setPartitions(&Partitions{})
