@@ -19,6 +19,7 @@ var port = flag.Int("port", 18001, "pd server port")
 var number = flag.Int("n", 1000, "request number")
 var dc = flag.String("dcinfo", "", "the dc info for this client")
 var useLeader = flag.Bool("leader", true, "whether force only send request to leader, otherwise chose any node in the same dc first")
+var logSlow = flag.Int("logslow", 20, "slow level to log")
 var clients = flag.Int("c", 10, "number of clients")
 var round = flag.Int("r", 1, "benchmark round number")
 var logLevel = flag.Int("loglevel", 1, "log level")
@@ -69,7 +70,7 @@ func doCommand(client *zanredisdb.ZanRedisClient, cmd string, args ...interface{
 	} else {
 		index = 29
 	}
-	if index >= 10 {
+	if index >= int64(*logSlow) {
 		fmt.Printf("do %s (%v) slow %v, %v\n", cmd, args[0], cost, time.Now().String())
 	}
 	atomic.AddInt64(&latencyDistribute[index], 1)
@@ -114,6 +115,7 @@ func bench(cmd string, f func(c *zanredisdb.ZanRedisClient) error) {
 	go func() {
 		lastNum := int64(0)
 		lastTime := time.Now()
+		printLatency := lastTime
 		for atomic.LoadInt32(&done) == 0 {
 			time.Sleep(time.Second * 30)
 			t2 := time.Now()
@@ -135,6 +137,19 @@ func bench(cmd string, f func(c *zanredisdb.ZanRedisClient) error) {
 			)
 			lastNum = num
 			lastTime = t2
+			if time.Since(printLatency) > time.Minute*30 {
+				for i, v := range latencyDistribute {
+					if i == 0 {
+						fmt.Printf("latency below 100ms:\n")
+					} else if i == 10 {
+						fmt.Printf("\nlatency between 100ms ~ 999ms:\n")
+					} else if i == 20 {
+						fmt.Printf("\nlatency above 1s:\n")
+					}
+					fmt.Printf("%d: %v,", i, v)
+				}
+				printLatency = t2
+			}
 		}
 	}()
 
