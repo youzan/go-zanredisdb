@@ -83,6 +83,7 @@ func bench(cmd string, f func(c *zanredisdb.ZanRedisClient) error) {
 	t1 := time.Now()
 	pdAddr := fmt.Sprintf("%s:%d", *ip, *port)
 	currentNumList := make([]int64, *clients)
+	latencyDistribute = make([]int64, 32)
 	errCnt := int64(0)
 	done := int32(0)
 	for i := 0; i < *clients; i++ {
@@ -378,9 +379,6 @@ func benchRangeList10() {
 func benchRangeList50() {
 	f := func(c *zanredisdb.ZanRedisClient) error {
 		n := atomic.AddInt64(&listRange50Base, 1) % int64(*primaryKeyCnt)
-		if n%10 != 0 {
-			return nil
-		}
 		tmp := fmt.Sprintf("%010d", int(n))
 		return doCommand(c, "LRANGE", "mytestlist"+tmp, 0, 50)
 	}
@@ -391,9 +389,6 @@ func benchRangeList50() {
 func benchRangeList100() {
 	f := func(c *zanredisdb.ZanRedisClient) error {
 		n := atomic.AddInt64(&listRange100Base, 1) % int64(*primaryKeyCnt)
-		if n%10 != 0 {
-			return nil
-		}
 		tmp := fmt.Sprintf("%010d", int(n))
 		return doCommand(c, "LRANGE", "mytestlist"+tmp, 0, 100)
 	}
@@ -640,9 +635,6 @@ func benchZRemRangeByScore() {
 	f := func(c *zanredisdb.ZanRedisClient) error {
 		n := atomic.AddInt64(&zsetPKBase, 1)
 		pk := n / subKeyCnt
-		if n%5 != 0 {
-			return nil
-		}
 		tmp := fmt.Sprintf("%010d", int(pk))
 		return doCommand(c, "ZREMRANGEBYSCORE", "myzsetkey"+tmp, 0, rand.Int()%int(subKeyCnt))
 	}
@@ -656,9 +648,6 @@ func benchZRangeByScore() {
 	f := func(c *zanredisdb.ZanRedisClient) error {
 		n := atomic.AddInt64(&zsetPKBase, 1)
 		pk := n / subKeyCnt
-		if n%5 != 0 {
-			return nil
-		}
 		tmp := fmt.Sprintf("%010d", int(pk))
 		return doCommand(c, "ZRANGEBYSCORE", "myzsetkey"+tmp, 0, rand.Int()%int(subKeyCnt), "limit", rand.Int()%100, 100)
 	}
@@ -672,9 +661,6 @@ func benchZRangeByRank() {
 	f := func(c *zanredisdb.ZanRedisClient) error {
 		n := atomic.AddInt64(&zsetPKBase, 1)
 		pk := n / subKeyCnt
-		if n%5 != 0 {
-			return nil
-		}
 		tmp := fmt.Sprintf("%010d", int(pk))
 		return doCommand(c, "ZRANGE", "myzsetkey"+tmp, 0, rand.Int()%100)
 	}
@@ -688,9 +674,6 @@ func benchZRevRangeByScore() {
 	f := func(c *zanredisdb.ZanRedisClient) error {
 		n := atomic.AddInt64(&zsetPKBase, 1)
 		pk := n / subKeyCnt
-		if n%5 != 0 {
-			return nil
-		}
 		tmp := fmt.Sprintf("%010d", int(pk))
 		return doCommand(c, "ZREVRANGEBYSCORE", "myzsetkey"+tmp, 0, rand.Int()%int(subKeyCnt), "limit", rand.Int()%100, 100)
 	}
@@ -704,9 +687,6 @@ func benchZRevRangeByRank() {
 	f := func(c *zanredisdb.ZanRedisClient) error {
 		n := atomic.AddInt64(&zsetPKBase, 1)
 		pk := n / subKeyCnt
-		if n%5 != 0 {
-			return nil
-		}
 		tmp := fmt.Sprintf("%010d", int(pk))
 		return doCommand(c, "ZREVRANGE", "myzsetkey"+tmp, 0, rand.Int()%100)
 	}
