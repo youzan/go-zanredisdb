@@ -427,6 +427,13 @@ func (cluster *Cluster) MaybeTriggerCheckForError(err error, delay time.Duration
 	if err == nil {
 		return false
 	}
+	if IsConnectClosed(err) {
+		if delay > 0 {
+			time.Sleep(delay)
+		}
+		// need retry for use of closed connection
+		return true
+	}
 	if IsConnectRefused(err) || IsFailedOnClusterChanged(err) {
 		if delay > 0 {
 			time.Sleep(delay)
@@ -846,7 +853,7 @@ func (cluster *Cluster) tend() {
 			levelLog.Infof("partition %v leader changed from %v to %v", partID, oldLeader, leaderAddr)
 		}
 		if len(replicas) == 0 {
-			levelLog.Infof("no any replicas for partition : %v", partID, partNodeInfo)
+			levelLog.Infof("no any replicas for partition : %v, %v", partID, partNodeInfo)
 			return
 		}
 		pinfo := PartitionAddrInfo{Leader: leaderAddr,

@@ -207,6 +207,9 @@ func (self *ZanRedisClient) FlushAndWaitPipelineCmd(cmds PipelineCmdList) ([]int
 		ro = time.Second
 	}
 	ro = ro * time.Duration(len(cmds))
+	if ro > time.Second*30 {
+		ro = time.Second * 30
+	}
 	for retry < 3 || time.Since(reqStart) < ro {
 		retry++
 		retryStart := time.Now()

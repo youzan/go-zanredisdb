@@ -29,6 +29,13 @@ func IsConnectRefused(err error) bool {
 	return false
 }
 
+func IsConnectClosed(err error) bool {
+	if err != nil {
+		return strings.Contains(strings.ToLower(err.Error()), "use of closed network")
+	}
+	return false
+}
+
 func IsFailedOnClusterChanged(err error) bool {
 	if err != nil {
 		return strings.HasPrefix(err.Error(), FailedOnClusterChanged) ||
@@ -116,6 +123,18 @@ type Conf struct {
 	// the datacenter info for client
 	// will be used for a single cluster acrossing datacenter
 	DC string
+}
+
+func NewDefaultConf() *Conf {
+	return &Conf{
+		DialTimeout:      time.Second * 3,
+		ReadTimeout:      time.Second * 5,
+		RangeReadTimeout: time.Second * 10,
+		IdleTimeout:      time.Second * 60,
+		MaxActiveConn:    50,
+		MaxIdleConn:      10,
+		TendInterval:     3,
+	}
 }
 
 func (conf *Conf) CheckValid() error {
