@@ -154,6 +154,10 @@ func (rh *RedisHost) InitConnPool(
 	}
 }
 
+func (rh *RedisHost) IsActive() bool {
+	return rh.connPool.IsActive()
+}
+
 func (rh *RedisHost) CloseConn() {
 	rh.connPool.Close()
 	rh.rangeConnPool.Close()
@@ -902,8 +906,8 @@ func (cluster *Cluster) tend() {
 
 	for _, partInfo := range newPartitions.PList {
 		for idx, replica := range partInfo.Replicas {
-			_, ok := nodes[replica]
-			if ok {
+			rh, ok := nodes[replica]
+			if ok && rh != nil && rh.IsActive() {
 				continue
 			}
 			newNode := &RedisHost{addr: replica,

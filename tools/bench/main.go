@@ -30,6 +30,7 @@ var namespace = flag.String("namespace", "default", "the prefix namespace")
 var table = flag.String("table", "test", "the table to write")
 var maxExpireSecs = flag.Int("maxExpire", 60, "max expire seconds to be allowed with setex")
 var minExpireSecs = flag.Int("minExpire", 10, "min expire seconds to be allowed with setex")
+var anyCommand = flag.String("any", "", "run given command string, use __rand__ for rand arg and use __seq__ for sequence arg")
 
 var wg sync.WaitGroup
 var loop int = 0
@@ -177,6 +178,40 @@ func bench(cmd string, f func(c *zanredisdb.ZanRedisClient) error) {
 		}
 		fmt.Printf("latency interval %d: %v\n", i, v)
 	}
+}
+
+var anyCmdBaseCnt int64 = 0
+
+func benchAnyCommand() {
+	anyCmds := strings.Split(*anyCommand, " ")
+	f := func(c *zanredisdb.ZanRedisClient) error {
+		n := atomic.AddInt64(&anyCmdBaseCnt, 1) % int64(*primaryKeyCnt)
+		seqStr := fmt.Sprintf("%010d", int(n))
+		rd := int64(rand.Uint64()) % int64(*primaryKeyCnt)
+		rdStr := fmt.Sprintf("%010d", int(rd))
+		var args []interface{}
+		for _, cmd := range anyCmds[1:] {
+			ncmd := strings.Replace(cmd, "__rand__", rdStr, -1)
+			ncmd = strings.Replace(ncmd, "__seq__", seqStr, -1)
+			args = append(args, ncmd)
+		}
+		return doCommand(c, anyCmds[0], args...)
+	}
+	bench(anyCmds[0], f)
+}
+
+func benchIncr() {
+
+}
+
+func benchGeoAdd() {
+
+}
+func benchHScan() {
+
+}
+func benchZScan() {
+
 }
 
 var kvSetBase int64 = 0
@@ -718,6 +753,9 @@ func main() {
 	zanredisdb.SetLogger(int32(*logLevel), zanredisdb.NewSimpleLogger())
 	ts := strings.Split(*tests, ",")
 	for i := 0; i < *round; i++ {
+		if *anyCommand != "" {
+			benchAnyCommand()
+		}
 		for _, s := range ts {
 			switch strings.ToLower(s) {
 			case "set":
@@ -734,6 +772,8 @@ func main() {
 				benchRandGet()
 			case "del":
 				benchDel()
+			case "incr":
+				benchIncr()
 			case "lpush":
 				benchLPushList()
 			case "rpush":
@@ -780,6 +820,15 @@ func main() {
 				benchZRem()
 			case "zremrangebyscore":
 				benchZRemRangeByScore()
+			case "geoadd":
+				benchGeoAdd()
+			case "geodist":
+			case "georadius":
+			case "georadiusbymember":
+			case "hscan":
+				benchHScan()
+			case "zscan":
+				benchZScan()
 			}
 		}
 		println("")
