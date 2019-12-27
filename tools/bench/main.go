@@ -184,10 +184,11 @@ var anyCmdBaseCnt int64 = 0
 
 func benchAnyCommand() {
 	anyCmds := strings.Split(*anyCommand, " ")
+	fmt.Printf("bench any command: %v\n", anyCmds)
 	f := func(c *zanredisdb.ZanRedisClient) error {
 		n := atomic.AddInt64(&anyCmdBaseCnt, 1) % int64(*primaryKeyCnt)
 		seqStr := fmt.Sprintf("%010d", int(n))
-		rd := int64(rand.Uint64()) % int64(*primaryKeyCnt)
+		rd := int64(rand.Int31()) % int64(*primaryKeyCnt)
 		rdStr := fmt.Sprintf("%010d", int(rd))
 		var args []interface{}
 		for _, cmd := range anyCmds[1:] {
