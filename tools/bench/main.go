@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"errors"
 	"flag"
 	"fmt"
 	"math/rand"
@@ -11,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/absolute8511/redigo/redis"
 	"github.com/youzan/go-zanredisdb"
 )
 
@@ -31,12 +34,20 @@ var table = flag.String("table", "test", "the table to write")
 var maxExpireSecs = flag.Int("maxExpire", 60, "max expire seconds to be allowed with setex")
 var minExpireSecs = flag.Int("minExpire", 10, "min expire seconds to be allowed with setex")
 var anyCommand = flag.String("any", "", "run given command string, use __rand__ for rand arg and use __seq__ for sequence arg")
+var checkData = flag.Bool("check_data", false, "whether check data after write")
+var checkDataSeed = flag.String("check_data_seed", "s1", "seed is used for write seed data to tell different bench tool")
+var logDetail = flag.Bool("log_detail", false, "log more")
 
 var wg sync.WaitGroup
 var loop int = 0
 var latencyDistribute []int64
 
 func doCommand(client *zanredisdb.ZanRedisClient, cmd string, args ...interface{}) error {
+	_, err := doCommandWithRsp(client, cmd, args...)
+	return err
+}
+
+func doCommandWithRsp(client *zanredisdb.ZanRedisClient, cmd string, args ...interface{}) (interface{}, error) {
 	v := args[0]
 	prefix := *namespace + ":" + *table + ":"
 	sharding := ""
@@ -55,10 +66,10 @@ func doCommand(client *zanredisdb.ZanRedisClient, cmd string, args ...interface{
 		args[0] = prefix + strconv.Itoa(int(vt))
 	}
 	s := time.Now()
-	_, err := client.DoRedis(strings.ToUpper(cmd), []byte(sharding), *useLeader, args...)
+	rsp, err := client.DoRedis(strings.ToUpper(cmd), []byte(sharding), *useLeader, args...)
 	if err != nil {
 		fmt.Printf("do %s (%v) error %s\n", cmd, args[0], err.Error())
-		return err
+		return rsp, err
 	}
 	cost := time.Since(s).Nanoseconds()
 	index := cost / 1000 / 1000
@@ -75,7 +86,7 @@ func doCommand(client *zanredisdb.ZanRedisClient, cmd string, args ...interface{
 		fmt.Printf("do %s (%v) slow %v, %v\n", cmd, args[0], cost, time.Now().String())
 	}
 	atomic.AddInt64(&latencyDistribute[index], 1)
-	return nil
+	return rsp, nil
 }
 
 func bench(cmd string, f func(c *zanredisdb.ZanRedisClient) error) {
@@ -225,35 +236,57 @@ func benchSet() {
 	for i := 0; i < len(valueSample); i++ {
 		valueSample[i] = byte(i % 255)
 	}
-	magicIdentify := make([]byte, 9+3+3)
-	for i := 0; i < len(magicIdentify); i++ {
-		if i < 3 || i > len(magicIdentify)-3 {
-			magicIdentify[i] = 0
-		} else {
-			magicIdentify[i] = byte(i % 3)
-		}
-	}
 	f := func(c *zanredisdb.ZanRedisClient) error {
 		value := make([]byte, *valueSize)
 		copy(value, valueSample)
 		n := atomic.AddInt64(&kvSetBase, 1) % int64(*primaryKeyCnt)
 		tmp := fmt.Sprintf("%010d", int(n))
-		ts := time.Now().String()
 		index := 0
-		copy(value[index:], magicIdentify)
-		index += len(magicIdentify)
-		if index < *valueSize {
-			copy(value[index:], ts)
-			index += len(ts)
-		}
 		if index < *valueSize {
 			copy(value[index:], tmp)
 			index += len(tmp)
 		}
-		if *valueSize > len(magicIdentify) {
-			copy(value[len(value)-len(magicIdentify):], magicIdentify)
+		tn := time.Now()
+		ts := strconv.FormatInt(tn.UnixNano(), 10)
+		if index < *valueSize {
+			copy(value[index:], ts)
+			index += len(ts)
 		}
-		return doCommand(c, "SET", tmp, value)
+		if *checkData && index < *valueSize {
+			seedStr := fmt.Sprintf("%s", *checkDataSeed)
+			copy(value[index:], seedStr)
+			index += len(seedStr)
+		}
+		if *logDetail {
+			fmt.Printf("set %s to %s\n", tmp, value)
+		}
+		err := doCommand(c, "SET", tmp, value)
+		if err != nil {
+			return err
+		}
+		if *checkData {
+			ret, err := redis.Bytes(doCommandWithRsp(c, "GET", tmp))
+			if err != nil {
+				return err
+			}
+			// check if this is new written
+			tstr := string(ret[len(tmp) : len(tmp)+19])
+			nano, err := strconv.ParseInt(tstr, 10, 64)
+			if err != nil {
+				fmt.Printf("%s time parse error: %v, %s\n", tmp, err.Error(), ret)
+				return err
+			}
+			vt := time.Unix(0, nano)
+			if vt.Before(tn) {
+				fmt.Printf("%s check data error %s at %s\n", tmp, ret, ts)
+				return err
+			}
+			if !bytes.Equal(ret[:index], value[:index]) {
+				fmt.Printf("set %s check data error %s, %s\n", tmp, value[:index], ret[:index])
+				return errors.New("check data error")
+			}
+		}
+		return nil
 	}
 	bench("set", f)
 }
@@ -265,36 +298,64 @@ func benchSetEx() {
 	for i := 0; i < len(valueSample); i++ {
 		valueSample[i] = byte(i % 255)
 	}
-	magicIdentify := make([]byte, 9+3+3)
-	for i := 0; i < len(magicIdentify); i++ {
-		if i < 3 || i > len(magicIdentify)-3 {
-			magicIdentify[i] = 0
-		} else {
-			magicIdentify[i] = byte(i % 3)
-		}
-	}
+
 	f := func(c *zanredisdb.ZanRedisClient) error {
 		value := make([]byte, *valueSize)
 		copy(value, valueSample)
 		n := atomic.AddInt64(&kvSetBase, 1) % int64(*primaryKeyCnt)
 		ttl := rand.Int31n(int32(*maxExpireSecs-*minExpireSecs)) + int32(*minExpireSecs)
-		tmp := fmt.Sprintf("%010d-%d-%s", int(n), ttl, time.Now().String())
-		ts := time.Now().String()
+		tmp := fmt.Sprintf("%010d-%d-%s", int(n), ttl, time.Now().Format(time.RFC3339Nano))
+		tn := time.Now()
+		ts := strconv.FormatInt(tn.UnixNano(), 10)
 		index := 0
-		copy(value[index:], magicIdentify)
-		index += len(magicIdentify)
-		if index < *valueSize {
-			copy(value[index:], ts)
-			index += len(ts)
-		}
 		if index < *valueSize {
 			copy(value[index:], tmp)
 			index += len(tmp)
 		}
-		if *valueSize > len(magicIdentify) {
-			copy(value[len(value)-len(magicIdentify):], magicIdentify)
+		if index < *valueSize {
+			copy(value[index:], ts)
+			index += len(ts)
 		}
-		return doCommand(c, "SETEX", tmp, ttl, value)
+		if *checkData && index < *valueSize {
+			seedStr := fmt.Sprintf("%s", *checkDataSeed)
+			copy(value[index:], seedStr)
+			index += len(seedStr)
+		}
+		if *logDetail {
+			fmt.Printf("set %s to %s\n", tmp, value)
+		}
+		err := doCommand(c, "SETEX", tmp, ttl, value)
+		if err != nil {
+			return err
+		}
+		if *checkData {
+			ret, err := redis.Bytes(doCommandWithRsp(c, "GET", tmp))
+			if err != nil {
+				fmt.Printf("set %s check data error %s\n", tmp, err.Error())
+				return err
+			}
+			// check if this is new written
+			tstr := string(ret[len(tmp) : len(tmp)+19])
+			nano, err := strconv.ParseInt(tstr, 10, 64)
+			if err != nil {
+				fmt.Printf("%s time parse error: %v, %s\n", tmp, err.Error(), ret)
+				return err
+			}
+			vt := time.Unix(0, nano)
+			if err != nil {
+				fmt.Printf("%s time parse error: %v, %s\n", tmp, err.Error(), ret)
+				return err
+			}
+			if vt.Before(tn) {
+				fmt.Printf("%s check data error %s at %s\n", tmp, ret, ts)
+				return err
+			}
+			if !bytes.Equal(ret[:index], value[:index]) {
+				fmt.Printf("set %s check data error %s, %s\n", tmp, value[:index], ret[:index])
+				return errors.New("check data error")
+			}
+		}
+		return nil
 	}
 
 	bench("setex", f)
@@ -304,7 +365,20 @@ func benchGet() {
 	f := func(c *zanredisdb.ZanRedisClient) error {
 		n := atomic.AddInt64(&kvGetBase, 1) % int64(*primaryKeyCnt)
 		k := fmt.Sprintf("%010d", int(n))
-		return doCommand(c, "GET", k)
+		ret, err := redis.Bytes(doCommandWithRsp(c, "GET", k))
+		if err != nil {
+			if err == redis.ErrNil {
+				return nil
+			}
+			return err
+		}
+		if *checkData && len(ret) > 0 {
+			if len(ret) < len(k) || string(ret[:len(k)]) != k {
+				fmt.Printf("get %s check data error %s\n", k, ret)
+				return errors.New("check data error")
+			}
+		}
+		return nil
 	}
 	bench("get", f)
 }
@@ -313,7 +387,20 @@ func benchRandGet() {
 	f := func(c *zanredisdb.ZanRedisClient) error {
 		n := rand.Int() % *number
 		k := fmt.Sprintf("%010d", int(n))
-		return doCommand(c, "GET", k)
+		ret, err := redis.Bytes(doCommandWithRsp(c, "GET", k))
+		if err != nil {
+			if err == redis.ErrNil {
+				return nil
+			}
+			return err
+		}
+		if *checkData && len(ret) > 0 {
+			if len(ret) < len(k) || string(ret[:len(k)]) != k {
+				fmt.Printf("get %s check data error %s\n", k, ret)
+				return errors.New("check data error")
+			}
+		}
+		return nil
 	}
 	bench("randget", f)
 }
@@ -322,7 +409,37 @@ func benchDel() {
 	f := func(c *zanredisdb.ZanRedisClient) error {
 		n := atomic.AddInt64(&kvDelBase, 1) % int64(*primaryKeyCnt)
 		k := fmt.Sprintf("%010d", int(n))
-		return doCommand(c, "DEL", k)
+		ts := time.Now()
+		err := doCommand(c, "DEL", k)
+		if err != nil {
+			return err
+		}
+		ret, err := redis.Bytes(doCommandWithRsp(c, "GET", k))
+		if err != nil {
+			if err == redis.ErrNil {
+				return nil
+			}
+			return err
+		}
+		if *checkData && len(ret) > 0 {
+			if len(ret) < len(k) || string(ret[:len(k)]) != k {
+				fmt.Printf("del %s check data error %s\n", k, ret)
+				return errors.New("check data error")
+			}
+			// check if this is new written
+			tstr := string(ret[len(k) : len(k)+19])
+			nano, err := strconv.ParseInt(tstr, 10, 64)
+			if err != nil {
+				fmt.Printf("%s time parse error: %v, %s\n", k, err.Error(), ret)
+				return err
+			}
+			vt := time.Unix(0, nano)
+			if vt.Before(ts) {
+				fmt.Printf("del %s check data error %s at %s\n", k, ret, ts)
+				return err
+			}
+		}
+		return nil
 	}
 
 	bench("del", f)
@@ -381,7 +498,7 @@ func benchPushList(pushCmd string) {
 		copy(value, valueSample)
 		n := atomic.AddInt64(&listPushBase, 1) % int64(*primaryKeyCnt)
 		tmp := fmt.Sprintf("%010d", int(n))
-		ts := time.Now().String()
+		ts := strconv.FormatInt(time.Now().UnixNano(), 10)
 		index := 0
 		copy(value[index:], magicIdentify)
 		index += len(magicIdentify)
@@ -463,14 +580,6 @@ func benchHset() {
 	for i := 0; i < len(valueSample); i++ {
 		valueSample[i] = byte(i % 255)
 	}
-	magicIdentify := make([]byte, 9+3+3)
-	for i := 0; i < len(magicIdentify); i++ {
-		if i < 3 || i > len(magicIdentify)-3 {
-			magicIdentify[i] = 0
-		} else {
-			magicIdentify[i] = byte(i % 3)
-		}
-	}
 	atomic.StoreInt64(&hashPKBase, 0)
 	subKeyCnt := int64(*number / (*primaryKeyCnt))
 	f := func(c *zanredisdb.ZanRedisClient) error {
@@ -481,23 +590,45 @@ func benchHset() {
 		pk := n / subKeyCnt
 		tmp := fmt.Sprintf("%010d", int(pk))
 		subkey := n - pk*subKeyCnt
-		ts := time.Now().String()
+		ts := strconv.FormatInt(time.Now().UnixNano(), 10)
 
 		index := 0
-		copy(value[index:], magicIdentify)
-		index += len(magicIdentify)
-		if index < *valueSize {
-			copy(value[index:], ts)
-			index += len(ts)
-		}
 		if index < *valueSize {
 			copy(value[index:], tmp)
 			index += len(tmp)
 		}
-		if *valueSize > len(magicIdentify) {
-			copy(value[len(value)-len(magicIdentify):], magicIdentify)
+		if index < *valueSize {
+			subks := fmt.Sprintf("%010d", subkey)
+			copy(value[index:], subks)
+			index += len(subks)
 		}
-		return doCommand(c, "HMSET", "myhashkey"+tmp, subkey, value, "intv", subkey, "strv", tmp)
+		if index < *valueSize {
+			copy(value[index:], ts)
+			index += len(ts)
+		}
+		if *checkData && index < *valueSize {
+			seedStr := fmt.Sprintf("%s", *checkDataSeed)
+			copy(value[index:], seedStr)
+			index += len(seedStr)
+		}
+		if *logDetail {
+			fmt.Printf("hset %s-%v to %s\n", tmp, subkey, value)
+		}
+		err := doCommand(c, "HMSET", "myhashkey"+tmp, subkey, value, "intv", subkey, "strv", tmp)
+		if err != nil {
+			return nil
+		}
+		if *checkData {
+			ret, err := redis.Bytes(doCommandWithRsp(c, "hget", "myhashkey"+tmp, subkey))
+			if err != nil {
+				return err
+			}
+			if len(ret) < index || !bytes.Equal(value[:index], ret[:index]) {
+				fmt.Printf("hmset %s check data error %s, %s\n", tmp, ret, value)
+				return errors.New("hmset check data error")
+			}
+		}
+		return nil
 	}
 
 	bench("hmset", f)
@@ -511,7 +642,21 @@ func benchHGet() {
 		pk := n / subKeyCnt
 		tmp := fmt.Sprintf("%010d", int(pk))
 		subkey := n - pk*subKeyCnt
-		return doCommand(c, "HGET", "myhashkey"+tmp, subkey)
+		ret, err := redis.Bytes(doCommandWithRsp(c, "HGET", "myhashkey"+tmp, subkey))
+		if err != nil {
+			if err == redis.ErrNil {
+				return nil
+			}
+			return err
+		}
+		if *checkData {
+			subs := fmt.Sprintf("%010d", subkey)
+			if len(ret) < len(tmp)+len(subs) || string(ret[:len(tmp)+len(subs)]) != tmp+subs {
+				fmt.Printf("hmset %s check data error %s\n", tmp, ret)
+				return errors.New("hmset check data error")
+			}
+		}
+		return nil
 	}
 
 	bench("hget", f)
@@ -525,7 +670,22 @@ func benchHRandGet() {
 		pk := n / subKeyCnt
 		tmp := fmt.Sprintf("%010d", int(pk))
 		subkey := n - pk*subKeyCnt
-		return doCommand(c, "HGET", "myhashkey"+tmp, subkey)
+		ret, err := doCommandWithRsp(c, "HGET", "myhashkey"+tmp, subkey)
+		if *checkData {
+			retBytes, err := redis.Bytes(ret, err)
+			if err != nil {
+				if err == redis.ErrNil {
+					return nil
+				}
+				return err
+			}
+			subs := fmt.Sprintf("%010d", subkey)
+			if len(retBytes) < len(tmp)+len(subs) || string(retBytes[:len(tmp)+len(subs)]) != tmp+subs {
+				fmt.Printf("hmset %s check data error %s\n", tmp, retBytes)
+				return errors.New("hmset check data error")
+			}
+		}
+		return err
 	}
 
 	bench("hrandget", f)
@@ -539,7 +699,38 @@ func benchHDel() {
 		pk := n / subKeyCnt
 		tmp := fmt.Sprintf("%010d", int(pk))
 		subkey := n - pk*subKeyCnt
-		return doCommand(c, "HDEL", "myhashkey"+tmp, subkey)
+		ts := time.Now()
+		err := doCommand(c, "HDEL", "myhashkey"+tmp, subkey)
+		if err != nil {
+			return err
+		}
+		ret, err := redis.Bytes(doCommandWithRsp(c, "HGET", "myhashkey"+tmp, subkey))
+		if err != nil {
+			if err == redis.ErrNil {
+				return nil
+			}
+			return err
+		}
+		if *checkData && len(ret) > 0 {
+			subs := fmt.Sprintf("%010d", subkey)
+			if len(ret) < len(tmp) || string(ret[:len(tmp)+len(subs)]) != tmp+subs {
+				fmt.Printf("del %s check data error %s\n", tmp+subs, ret)
+				return errors.New("check data error")
+			}
+			// check if this is new written
+			tstr := string(ret[len(tmp)+len(subs) : len(tmp)+len(subs)+19])
+			nano, err := strconv.ParseInt(tstr, 10, 64)
+			if err != nil {
+				fmt.Printf("%s time parse error: %v, %s\n", tmp, err.Error(), ret)
+				return err
+			}
+			vt := time.Unix(0, nano)
+			if vt.Before(ts) {
+				fmt.Printf("del %s check data error %s at %s\n", tmp+subs, ret, ts)
+				return err
+			}
+		}
+		return nil
 	}
 
 	bench("hdel", f)
@@ -730,6 +921,18 @@ func benchZRevRangeByRank() {
 	bench("zrevrange", f)
 }
 
+func runOrCheck(f func(), wg *sync.WaitGroup) {
+	if *checkData {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			f()
+		}()
+	} else {
+		f()
+	}
+}
+
 func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
@@ -754,31 +957,32 @@ func main() {
 	zanredisdb.SetLogger(int32(*logLevel), zanredisdb.NewSimpleLogger())
 	ts := strings.Split(*tests, ",")
 	for i := 0; i < *round; i++ {
+		var wg sync.WaitGroup
 		if *anyCommand != "" {
-			benchAnyCommand()
+			runOrCheck(benchAnyCommand, &wg)
 		}
 		for _, s := range ts {
 			switch strings.ToLower(s) {
 			case "set":
-				benchSet()
+				runOrCheck(benchSet, &wg)
 			case "setex":
-				benchSetEx()
+				runOrCheck(benchSetEx, &wg)
 			case "pfadd":
-				benchPFAdd()
+				runOrCheck(benchPFAdd, &wg)
 			case "pfcount":
-				benchPFCount()
+				runOrCheck(benchPFCount, &wg)
 			case "get":
-				benchGet()
+				runOrCheck(benchGet, &wg)
 			case "randget":
-				benchRandGet()
+				runOrCheck(benchRandGet, &wg)
 			case "del":
-				benchDel()
+				runOrCheck(benchDel, &wg)
 			case "incr":
-				benchIncr()
+				runOrCheck(benchIncr, &wg)
 			case "lpush":
-				benchLPushList()
+				runOrCheck(benchLPushList, &wg)
 			case "rpush":
-				benchRPushList()
+				runOrCheck(benchRPushList, &wg)
 			case "lrange":
 				benchRangeList10()
 				benchRangeList50()
@@ -788,13 +992,13 @@ func main() {
 			case "rpop":
 				benchRPopList()
 			case "hset":
-				benchHset()
+				runOrCheck(benchHset, &wg)
 			case "hget":
-				benchHGet()
+				runOrCheck(benchHGet, &wg)
 			case "randhget":
-				benchHRandGet()
+				runOrCheck(benchHRandGet, &wg)
 			case "hdel":
-				benchHDel()
+				runOrCheck(benchHDel, &wg)
 			case "sadd":
 				benchSAdd()
 			case "srem":
@@ -832,6 +1036,7 @@ func main() {
 				benchZScan()
 			}
 		}
+		wg.Wait()
 		println("")
 	}
 }
