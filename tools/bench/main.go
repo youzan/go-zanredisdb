@@ -587,7 +587,7 @@ func benchHset() {
 		value := make([]byte, *valueSize)
 		copy(value, valueSample)
 
-		n := atomic.AddInt64(&hashSetBase, 1)
+		n := atomic.AddInt64(&hashSetBase, 1) % int64(*keyNumber)
 		pk := n / subKeyCnt
 		tmp := fmt.Sprintf("%010d", int(pk))
 		subkey := n - pk*subKeyCnt
@@ -639,7 +639,7 @@ func benchHGet() {
 	atomic.StoreInt64(&hashPKBase, 0)
 	subKeyCnt := int64(*keyNumber / (*primaryKeyCnt))
 	f := func(c *zanredisdb.ZanRedisClient) error {
-		n := atomic.AddInt64(&hashGetBase, 1)
+		n := atomic.AddInt64(&hashGetBase, 1) % int64(*keyNumber)
 		pk := n / subKeyCnt
 		tmp := fmt.Sprintf("%010d", int(pk))
 		subkey := n - pk*subKeyCnt
@@ -696,7 +696,7 @@ func benchHDel() {
 	atomic.StoreInt64(&hashPKBase, 0)
 	subKeyCnt := int64(*keyNumber / (*primaryKeyCnt))
 	f := func(c *zanredisdb.ZanRedisClient) error {
-		n := atomic.AddInt64(&hashDelBase, 1)
+		n := atomic.AddInt64(&hashDelBase, 1) % int64(*keyNumber)
 		pk := n / subKeyCnt
 		tmp := fmt.Sprintf("%010d", int(pk))
 		subkey := n - pk*subKeyCnt
@@ -745,7 +745,7 @@ func benchSAdd() {
 	atomic.StoreInt64(&setPKBase, 0)
 	subKeyCnt := int64(*keyNumber / (*primaryKeyCnt))
 	f := func(c *zanredisdb.ZanRedisClient) error {
-		n := atomic.AddInt64(&setAddBase, 1)
+		n := atomic.AddInt64(&setAddBase, 1) % int64(*keyNumber)
 		pk := n / subKeyCnt
 		tmp := fmt.Sprintf("%010d", int(pk))
 		subkey := n - pk*subKeyCnt
@@ -758,7 +758,7 @@ func benchSRem() {
 	atomic.StoreInt64(&setPKBase, 0)
 	subKeyCnt := int64(*keyNumber / (*primaryKeyCnt))
 	f := func(c *zanredisdb.ZanRedisClient) error {
-		n := atomic.AddInt64(&setDelBase, 1)
+		n := atomic.AddInt64(&setDelBase, 1) % int64(*keyNumber)
 		pk := n / subKeyCnt
 		tmp := fmt.Sprintf("%010d", int(pk))
 		subkey := n - pk*subKeyCnt
@@ -772,7 +772,7 @@ func benchSPop() {
 	atomic.StoreInt64(&setPKBase, 0)
 	subKeyCnt := int64(*keyNumber / (*primaryKeyCnt))
 	f := func(c *zanredisdb.ZanRedisClient) error {
-		n := atomic.AddInt64(&setDelBase, 1)
+		n := atomic.AddInt64(&setDelBase, 1) % int64(*keyNumber)
 		pk := n / subKeyCnt
 		tmp := fmt.Sprintf("%010d", int(pk))
 		return doCommand(c, "SPOP", "mysetkey"+tmp)
@@ -785,7 +785,7 @@ func benchSClear() {
 	atomic.StoreInt64(&setPKBase, 0)
 	subKeyCnt := int64(*keyNumber / (*primaryKeyCnt))
 	f := func(c *zanredisdb.ZanRedisClient) error {
-		n := atomic.AddInt64(&setDelBase, 1)
+		n := atomic.AddInt64(&setDelBase, 1) % int64(*keyNumber)
 		pk := n / subKeyCnt
 		tmp := fmt.Sprintf("%010d", int(pk))
 		return doCommand(c, "SCLEAR", "mysetkey"+tmp)
@@ -829,7 +829,7 @@ func benchZAdd() {
 	atomic.StoreInt64(&zsetPKBase, 0)
 	subKeyCnt := int64(*keyNumber / (*primaryKeyCnt))
 	f := func(c *zanredisdb.ZanRedisClient) error {
-		n := atomic.AddInt64(&zsetAddBase, 1)
+		n := atomic.AddInt64(&zsetAddBase, 1) % int64(*keyNumber)
 		pk := n / subKeyCnt
 		tmp := fmt.Sprintf("%010d", int(pk))
 		subkey := n - pk*subKeyCnt
@@ -845,7 +845,7 @@ func benchZRem() {
 	atomic.StoreInt64(&zsetPKBase, 0)
 	subKeyCnt := int64(*keyNumber / (*primaryKeyCnt))
 	f := func(c *zanredisdb.ZanRedisClient) error {
-		n := atomic.AddInt64(&zsetDelBase, 1)
+		n := atomic.AddInt64(&zsetDelBase, 1) % int64(*keyNumber)
 		pk := n / subKeyCnt
 		tmp := fmt.Sprintf("%010d", int(pk))
 		subkey := n - pk*subKeyCnt
@@ -861,7 +861,7 @@ func benchZRemRangeByScore() {
 	atomic.StoreInt64(&zsetPKBase, 0)
 	subKeyCnt := int64(*keyNumber / (*primaryKeyCnt))
 	f := func(c *zanredisdb.ZanRedisClient) error {
-		n := atomic.AddInt64(&zsetPKBase, 1)
+		n := atomic.AddInt64(&zsetPKBase, 1) % int64(*keyNumber)
 		pk := n / subKeyCnt
 		tmp := fmt.Sprintf("%010d", int(pk))
 		return doCommand(c, "ZREMRANGEBYSCORE", "myzsetkey"+tmp, 0, rand.Int()%int(subKeyCnt))
@@ -874,7 +874,7 @@ func benchZRangeByScore() {
 	atomic.StoreInt64(&zsetPKBase, 0)
 	subKeyCnt := int64(*keyNumber / (*primaryKeyCnt))
 	f := func(c *zanredisdb.ZanRedisClient) error {
-		n := atomic.AddInt64(&zsetPKBase, 1)
+		n := atomic.AddInt64(&zsetPKBase, 1) % int64(*keyNumber)
 		pk := n / subKeyCnt
 		tmp := fmt.Sprintf("%010d", int(pk))
 		return doCommand(c, "ZRANGEBYSCORE", "myzsetkey"+tmp, 0, rand.Int()%int(subKeyCnt), "limit", rand.Int()%100, 100)
@@ -887,7 +887,7 @@ func benchZRangeByRank() {
 	atomic.StoreInt64(&zsetPKBase, 0)
 	subKeyCnt := int64(*keyNumber / (*primaryKeyCnt))
 	f := func(c *zanredisdb.ZanRedisClient) error {
-		n := atomic.AddInt64(&zsetPKBase, 1)
+		n := atomic.AddInt64(&zsetPKBase, 1) % int64(*keyNumber)
 		pk := n / subKeyCnt
 		tmp := fmt.Sprintf("%010d", int(pk))
 		return doCommand(c, "ZRANGE", "myzsetkey"+tmp, 0, rand.Int()%100)
@@ -900,7 +900,7 @@ func benchZRevRangeByScore() {
 	atomic.StoreInt64(&zsetPKBase, 0)
 	subKeyCnt := int64(*keyNumber / (*primaryKeyCnt))
 	f := func(c *zanredisdb.ZanRedisClient) error {
-		n := atomic.AddInt64(&zsetPKBase, 1)
+		n := atomic.AddInt64(&zsetPKBase, 1) % int64(*keyNumber)
 		pk := n / subKeyCnt
 		tmp := fmt.Sprintf("%010d", int(pk))
 		return doCommand(c, "ZREVRANGEBYSCORE", "myzsetkey"+tmp, 0, rand.Int()%int(subKeyCnt), "limit", rand.Int()%100, 100)
@@ -913,7 +913,7 @@ func benchZRevRangeByRank() {
 	atomic.StoreInt64(&zsetPKBase, 0)
 	subKeyCnt := int64(*keyNumber / (*primaryKeyCnt))
 	f := func(c *zanredisdb.ZanRedisClient) error {
-		n := atomic.AddInt64(&zsetPKBase, 1)
+		n := atomic.AddInt64(&zsetPKBase, 1) % int64(*keyNumber)
 		pk := n / subKeyCnt
 		tmp := fmt.Sprintf("%010d", int(pk))
 		return doCommand(c, "ZREVRANGE", "myzsetkey"+tmp, 0, rand.Int()%100)
