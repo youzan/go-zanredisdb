@@ -22,6 +22,13 @@ const (
 	defaultManyArgsNum             = 1024
 )
 
+func IsTimeoutErr(err error) bool {
+	if err != nil {
+		return strings.Contains(strings.ToLower(err.Error()), "i/o timeout")
+	}
+	return false
+}
+
 func IsConnectRefused(err error) bool {
 	if err != nil {
 		return strings.Contains(strings.ToLower(err.Error()), "connection refused")

@@ -341,7 +341,7 @@ func (self *ZanRedisClient) internalDoRedis(cmd string, shardingKey []byte,
 		if err != nil {
 			clusterChanged := cluster.MaybeTriggerCheckForError(err, 0)
 			if clusterChanged {
-				levelLog.Infof("command err for cluster changed: %v", cmd)
+				levelLog.Debugf("command err for cluster changed: %v", cmd)
 			} else {
 				if isLargeKey {
 					// avoid retry for large key or exception key to reduce
@@ -350,7 +350,7 @@ func (self *ZanRedisClient) internalDoRedis(cmd string, shardingKey []byte,
 						string(shardingKey), argsVSize, err.Error())
 					break
 				}
-				levelLog.Infof("command err : %v-%v, %v, %v", cmd, string(shardingKey), err.Error(), argsVSize)
+				levelLog.Debugf("command err : %v-%v, %v, %v", cmd, string(shardingKey), err.Error(), argsVSize)
 			}
 			if redisHost != nil {
 				redisHost.MaybeIncFailed(err)
@@ -374,7 +374,7 @@ func (self *ZanRedisClient) internalDoRedis(cmd string, shardingKey []byte,
 		if err != nil {
 			clusterChanged := cluster.MaybeTriggerCheckForError(err, 0)
 			if clusterChanged {
-				levelLog.Infof("command err for cluster changed: %v, %v, node: %v",
+				levelLog.Debugf("command err for cluster changed: %v, %v, node: %v",
 					shardingKey, args, remote)
 				// we can retry for cluster error
 			} else {
@@ -387,7 +387,11 @@ func (self *ZanRedisClient) internalDoRedis(cmd string, shardingKey []byte,
 					levelLog.Infof("large or exception key err: %v-%v, %v, %v", cmd, string(shardingKey), argsVSize, err.Error())
 					break
 				}
-				levelLog.Infof("command err : %v-%v, %v, %v", cmd, string(shardingKey), err.Error(), argsVSize)
+				if cmdKind == writeCmd && IsTimeoutErr(err) {
+					// do not retry on timeout for write to avoid dup write
+					break
+				}
+				levelLog.Debugf("command err : %v-%v, %v, %v", cmd, string(shardingKey), err.Error(), argsVSize)
 			}
 
 			redisHost.MaybeIncFailed(err)

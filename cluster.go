@@ -378,7 +378,7 @@ func NewCluster(conf *Conf, largeConf *LargeKeyConf) *Cluster {
 	copy(cluster.LookupList, primaryLookups)
 
 	cluster.dialF = func(addr string) (redis.Conn, error) {
-		levelLog.Infof("new conn dial to : %v", addr)
+		levelLog.Debugf("new conn dial to : %v", addr)
 		return redis.Dial("tcp", addr, redis.DialConnectTimeout(conf.DialTimeout),
 			redis.DialReadTimeout(conf.ReadTimeout),
 			redis.DialWriteTimeout(conf.WriteTimeout),
@@ -386,7 +386,7 @@ func NewCluster(conf *Conf, largeConf *LargeKeyConf) *Cluster {
 		)
 	}
 	cluster.dialRangeF = func(addr string) (redis.Conn, error) {
-		levelLog.Infof("new conn for range dial to : %v", addr)
+		levelLog.Debugf("new conn for range dial to : %v", addr)
 		rt := conf.RangeReadTimeout
 		if rt < time.Second {
 			rt = conf.ReadTimeout*5 + time.Second
