@@ -17,7 +17,7 @@ import (
 var ErrSizeExceedLimit = errors.New("key value size exceeded the limit")
 
 const (
-	MinRetrySleep = time.Millisecond * 10
+	MinRetrySleep = time.Millisecond * 5
 	anyCmd        = 0
 	readCmd       = 1
 	writeCmd      = 2
@@ -232,7 +232,7 @@ func (self *ZanRedisClient) FlushAndWaitPipelineCmd(cmds PipelineCmdList) ([]int
 			}
 		}
 		if needRetry {
-			time.Sleep(MinRetrySleep + time.Millisecond*time.Duration(10*(2<<retry)))
+			time.Sleep(MinRetrySleep + MinRetrySleep*time.Duration(2<<retry))
 		} else {
 			break
 		}
@@ -355,7 +355,7 @@ func (self *ZanRedisClient) internalDoRedis(cmd string, shardingKey []byte,
 			if redisHost != nil {
 				redisHost.MaybeIncFailed(err)
 			}
-			time.Sleep(MinRetrySleep + time.Millisecond*time.Duration(10*(2<<retry)))
+			time.Sleep(MinRetrySleep + MinRetrySleep*time.Duration(2<<retry))
 			continue
 		}
 		remote := conn.RemoteAddrStr()
@@ -395,7 +395,7 @@ func (self *ZanRedisClient) internalDoRedis(cmd string, shardingKey []byte,
 			}
 
 			redisHost.MaybeIncFailed(err)
-			time.Sleep(MinRetrySleep + time.Millisecond*time.Duration(10*(2<<retry)))
+			time.Sleep(MinRetrySleep + MinRetrySleep*time.Duration(2<<retry))
 		} else {
 			redisHost.IncSuccess()
 			break
@@ -748,7 +748,7 @@ func (client *ZanRedisClient) DoScan(cmd, tp, set string, count int, cursor []by
 		}
 		if err != nil {
 			client.cluster.MaybeTriggerCheckForError(err, 0)
-			time.Sleep(MinRetrySleep + time.Millisecond*time.Duration(10*(2<<retry)))
+			time.Sleep(MinRetrySleep + MinRetrySleep*time.Duration(2<<retry))
 			continue
 		}
 		rsps = make([]interface{}, len(conns))
@@ -842,7 +842,7 @@ func (client *ZanRedisClient) DoScanChannel(cmd, tp, set string, stopC chan stru
 					break
 				default:
 				}
-				time.Sleep(MinRetrySleep + time.Millisecond*time.Duration(10*(2<<retry)))
+				time.Sleep(MinRetrySleep + MinRetrySleep*time.Duration(2<<retry))
 				continue
 			}
 			var wg sync.WaitGroup
@@ -926,7 +926,7 @@ func (client *ZanRedisClient) DoFullScanChannel(tp, set string, stopC chan struc
 					break
 				default:
 				}
-				time.Sleep(MinRetrySleep + time.Millisecond*time.Duration(10*(2<<retry)))
+				time.Sleep(MinRetrySleep + MinRetrySleep*time.Duration(2<<retry))
 				continue
 			}
 
@@ -1028,7 +1028,7 @@ func (client *ZanRedisClient) DoFullScan(cmd, tp, set string, count int, cursor 
 		}
 		if err != nil {
 			client.cluster.MaybeTriggerCheckForError(err, 0)
-			time.Sleep(MinRetrySleep + time.Millisecond*time.Duration(10*(2<<retry)))
+			time.Sleep(MinRetrySleep + MinRetrySleep*time.Duration(2<<retry))
 			continue
 		}
 
