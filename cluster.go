@@ -28,6 +28,7 @@ var (
 	NextRetryFailedInterval = time.Minute * 2
 	ErrCntForStopRW         = 3
 	LargeKeyPoolNum         = 3
+	defaultWaitConnTimeout  = time.Millisecond * 150
 )
 
 var (
@@ -73,8 +74,9 @@ type RedisHost struct {
 	lastFailedTs  int64
 	connPool      *redis.QueuePool
 	// connection for range query such as scan/lrange/smembers/zrange
-	rangeConnPool *redis.QueuePool
-	largeKVPool   []*redis.QueuePool
+	rangeConnPool   *redis.QueuePool
+	largeKVPool     []*redis.QueuePool
+	waitConnTimeout time.Duration
 }
 
 func newConnPool(
@@ -108,6 +110,10 @@ func (rh *RedisHost) InitConnPool(
 	}
 	if conf.MaxIdleConn > 0 {
 		maxIdle = conf.MaxIdleConn
+	}
+	rh.waitConnTimeout = conf.MaxConnWait
+	if rh.waitConnTimeout == 0 {
+		rh.waitConnTimeout = defaultWaitConnTimeout
 	}
 	rh.connPool = newConnPool(maxIdle, maxActive, newFn, testBorrow, conf)
 
@@ -172,6 +178,10 @@ func (rh *RedisHost) Refresh() {
 	for _, c := range rh.largeKVPool {
 		c.Refresh()
 	}
+}
+
+func (rh *RedisHost) Conn(poolType PoolType, hint int) (redis.Conn, error) {
+	return rh.ConnPool(poolType).Get(rh.waitConnTimeout, hint)
 }
 
 func (rh *RedisHost) ConnPool(poolType PoolType) *redis.QueuePool {
@@ -636,7 +646,7 @@ func (cluster *Cluster) GetHostAndConn(pk []byte, leader bool, tryLocalForRead b
 	if err != nil {
 		return nil, nil, err
 	}
-	conn, err := picked.ConnPool(getPoolType(isSlowQuery)).Get(0, int(pk[0]))
+	conn, err := picked.Conn(getPoolType(isSlowQuery), int(pk[0]))
 	return picked, conn, err
 }
 
@@ -651,7 +661,7 @@ func (cluster *Cluster) GetHostAndConnForLarge(pk []byte, leader bool, tryLocalF
 		return picked, conn, err
 	}
 
-	conn, err := picked.ConnPool(getPoolType(vsize >= defaultMaxValueSize/4)).Get(0, int(pk[0]))
+	conn, err := picked.Conn(getPoolType(vsize >= defaultMaxValueSize/4), int(pk[0]))
 	return picked, conn, err
 }
 
@@ -665,7 +675,7 @@ func (cluster *Cluster) getConnsByHosts(hosts []string, isSlowQuery bool) ([]red
 	var conns []redis.Conn
 	for _, h := range hosts {
 		if v, ok := nodes[h]; ok {
-			conn, err := v.ConnPool(getPoolType(isSlowQuery)).Get(0, 0)
+			conn, err := v.Conn(getPoolType(isSlowQuery), 0)
 			if err != nil {
 				return nil, err
 			}
@@ -690,7 +700,7 @@ func (cluster *Cluster) GetConnsForAllParts(isSlowQuery bool) ([]redis.Conn, err
 		if p.Leader == nil {
 			return nil, errors.New("no leader for partition")
 		}
-		conn, err := p.Leader.ConnPool(getPoolType(isSlowQuery)).Get(0, 0)
+		conn, err := p.Leader.Conn(getPoolType(isSlowQuery), 0)
 		if err != nil {
 			return nil, err
 		}

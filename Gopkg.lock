@@ -2,15 +2,15 @@
 
 
 [[projects]]
-  digest = "1:5ced5e29b089c54190dae59246df1bd96d38fb89a92b4d51fd3fc22facded871"
+  digest = "1:881f7bc65ddf908a5a7e70561b487344bfa29e7e7e79917c4d03a75ddb80f55c"
   name = "github.com/absolute8511/redigo"
   packages = [
     "internal",
     "redis",
   ]
   pruneopts = "UT"
-  revision = "868eebcfefc3e3d881164a852e71e6b12c801a16"
-  version = "v1.3.2"
+  revision = "aef77ca0ebd6e0f8d4e75d86b15056a4d861891e"
+  version = "v1.4.0"
 
 [[projects]]
   digest = "1:ffe9824d294da03b391f44e1ae8281281b4afc1bdaa9588c9097785e3af10cec"

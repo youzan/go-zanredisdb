@@ -13,7 +13,7 @@ var (
 	FailedOnNodeStopped              = "the node stopped"
 	errNoNodeForPartition            = errors.New("no partition node")
 	errNoConnForHost                 = errors.New("no any connection for host")
-	defaultGetConnTimeoutForLargeKey = time.Millisecond * 500
+	defaultGetConnTimeoutForLargeKey = time.Millisecond * 100
 )
 
 const (
@@ -119,6 +119,7 @@ type Conf struct {
 	RangeReadTimeout time.Duration
 	WriteTimeout     time.Duration
 	IdleTimeout      time.Duration
+	MaxConnWait      time.Duration
 	MaxActiveConn    int
 	// idle num that will be kept for all idle connections
 	MaxIdleConn int
@@ -138,6 +139,7 @@ func NewDefaultConf() *Conf {
 		ReadTimeout:      time.Second * 5,
 		RangeReadTimeout: time.Second * 10,
 		IdleTimeout:      time.Second * 60,
+		MaxConnWait:      defaultWaitConnTimeout,
 		MaxActiveConn:    50,
 		MaxIdleConn:      10,
 		TendInterval:     3,
