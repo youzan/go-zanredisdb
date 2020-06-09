@@ -12,7 +12,7 @@ import (
 )
 
 var pdAddr = "127.0.0.1:18001"
-var testNS = "test"
+var testNS = "test_p8"
 
 type testLogger struct {
 	t *testing.T

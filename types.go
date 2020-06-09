@@ -13,7 +13,7 @@ var (
 	FailedOnNodeStopped              = "the node stopped"
 	errNoNodeForPartition            = errors.New("no partition node")
 	errNoConnForHost                 = errors.New("no any connection for host")
-	defaultGetConnTimeoutForLargeKey = time.Millisecond * 100
+	defaultGetConnTimeoutForLargeKey = time.Millisecond * 250
 )
 
 const (

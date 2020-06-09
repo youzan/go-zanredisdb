@@ -27,8 +27,8 @@ var (
 	MaxRetryInterval        = time.Minute
 	NextRetryFailedInterval = time.Minute * 2
 	ErrCntForStopRW         = 3
-	LargeKeyPoolNum         = 3
-	defaultWaitConnTimeout  = time.Millisecond * 150
+	LargeKeyPoolNum         = 4
+	defaultWaitConnTimeout  = time.Millisecond * 500
 )
 
 var (
