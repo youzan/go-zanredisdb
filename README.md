@@ -12,3 +12,4 @@ Run `go test` (which requires the ZanRedisDB cluster inited with the test namesp
 
 [zan]: https://github.com/youzan/ZanRedisDB
 [zan_godoc]: https://godoc.org/github.com/youzan/go-zanredisdb
+
