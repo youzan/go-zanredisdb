@@ -156,6 +156,9 @@ func (conf *Conf) CheckValid() error {
 	if len(conf.MultiConf) > 0 {
 		return conf.MultiConf.CheckValid()
 	}
+	if conf.TendInterval <= 0 {
+		return errors.New("tend interval should be great than zero")
+	}
 	return nil
 }
 
