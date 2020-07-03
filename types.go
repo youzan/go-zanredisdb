@@ -150,6 +150,9 @@ func (conf *Conf) CheckValid() error {
 	if len(conf.LookupList) > 0 && len(conf.MultiConf) > 0 {
 		return errors.New("configure invalid: should not use both LookupList and MultiConf")
 	}
+	if len(conf.LookupList) == 0 && len(conf.MultiConf) == 0 {
+		return errors.New("configure invalid: lookup list and multiconf can not both be empty")
+	}
 	if len(conf.MultiConf) > 0 {
 		return conf.MultiConf.CheckValid()
 	}
