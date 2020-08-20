@@ -16,6 +16,15 @@ import (
 
 var ErrSizeExceedLimit = errors.New("key value size exceeded the limit")
 
+func isNoRetryErr(err error) bool {
+	switch err {
+	case redis.ErrPoolExhausted:
+		return true
+	default:
+		return false
+	}
+}
+
 const (
 	MinRetrySleep = time.Millisecond * 5
 	anyCmd        = 0
@@ -354,6 +363,9 @@ func (self *ZanRedisClient) internalDoRedis(cmd string, shardingKey []byte,
 			}
 			if redisHost != nil {
 				redisHost.MaybeIncFailed(err)
+			}
+			if isNoRetryErr(err) {
+				break
 			}
 			time.Sleep(MinRetrySleep + MinRetrySleep*time.Duration(2<<retry))
 			continue
