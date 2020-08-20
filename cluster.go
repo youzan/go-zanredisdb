@@ -180,8 +180,8 @@ func (rh *RedisHost) Refresh() {
 	}
 }
 
-func (rh *RedisHost) Conn(poolType PoolType, hint int) (redis.Conn, error) {
-	return rh.ConnPool(poolType).Get(rh.waitConnTimeout, hint)
+func (rh *RedisHost) Conn(poolType PoolType, hint int, retry int) (redis.Conn, error) {
+	return rh.ConnPool(poolType).GetRetry(rh.waitConnTimeout, hint, retry)
 }
 
 func (rh *RedisHost) ConnPool(poolType PoolType) *redis.QueuePool {
@@ -646,7 +646,7 @@ func (cluster *Cluster) GetHostAndConn(pk []byte, leader bool, tryLocalForRead b
 	if err != nil {
 		return nil, nil, err
 	}
-	conn, err := picked.Conn(getPoolType(isSlowQuery), int(pk[0]))
+	conn, err := picked.Conn(getPoolType(isSlowQuery), int(pk[0]), cluster.conf.MaxRetryGetConn)
 	return picked, conn, err
 }
 
@@ -657,11 +657,11 @@ func (cluster *Cluster) GetHostAndConnForLarge(pk []byte, leader bool, tryLocalF
 	}
 	if cluster.largeKeyConf != nil {
 		rh := picked.getConnPoolForLargeKey(vsize, cluster.largeKeyConf.MaxAllowedValueSize)
-		conn, err := rh.Get(cluster.largeKeyConf.GetConnTimeoutForLargeKey, int(pk[0]))
+		conn, err := rh.GetRetry(cluster.largeKeyConf.GetConnTimeoutForLargeKey, int(pk[0]), 1)
 		return picked, conn, err
 	}
 
-	conn, err := picked.Conn(getPoolType(vsize >= defaultMaxValueSize/4), int(pk[0]))
+	conn, err := picked.Conn(getPoolType(vsize >= defaultMaxValueSize/4), int(pk[0]), cluster.conf.MaxRetryGetConn)
 	return picked, conn, err
 }
 
@@ -675,7 +675,7 @@ func (cluster *Cluster) getConnsByHosts(hosts []string, isSlowQuery bool) ([]red
 	var conns []redis.Conn
 	for _, h := range hosts {
 		if v, ok := nodes[h]; ok {
-			conn, err := v.Conn(getPoolType(isSlowQuery), 0)
+			conn, err := v.Conn(getPoolType(isSlowQuery), 0, cluster.conf.MaxRetryGetConn)
 			if err != nil {
 				return nil, err
 			}
@@ -700,7 +700,7 @@ func (cluster *Cluster) GetConnsForAllParts(isSlowQuery bool) ([]redis.Conn, err
 		if p.Leader == nil {
 			return nil, errors.New("no leader for partition")
 		}
-		conn, err := p.Leader.Conn(getPoolType(isSlowQuery), 0)
+		conn, err := p.Leader.Conn(getPoolType(isSlowQuery), 0, cluster.conf.MaxRetryGetConn)
 		if err != nil {
 			return nil, err
 		}

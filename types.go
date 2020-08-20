@@ -120,6 +120,7 @@ type Conf struct {
 	WriteTimeout     time.Duration
 	IdleTimeout      time.Duration
 	MaxConnWait      time.Duration
+	MaxRetryGetConn  int
 	MaxActiveConn    int
 	// idle num that will be kept for all idle connections
 	MaxIdleConn int
@@ -140,6 +141,7 @@ func NewDefaultConf() *Conf {
 		RangeReadTimeout: time.Second * 10,
 		IdleTimeout:      time.Second * 60,
 		MaxConnWait:      defaultWaitConnTimeout,
+		MaxRetryGetConn:  3,
 		MaxActiveConn:    50,
 		MaxIdleConn:      10,
 		TendInterval:     3,
