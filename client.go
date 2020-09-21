@@ -367,6 +367,10 @@ func (self *ZanRedisClient) internalDoRedis(cmd string, shardingKey []byte,
 			if isNoRetryErr(err) {
 				break
 			}
+			// we should break early if get conn failed too long
+			if time.Since(reqStart) > self.conf.MaxConnWait {
+				break
+			}
 			time.Sleep(MinRetrySleep + MinRetrySleep*time.Duration(2<<retry))
 			continue
 		}
