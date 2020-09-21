@@ -943,3 +943,32 @@ func testClientReadLocal(t *testing.T, testSameWithPrimary bool, testFailedLocal
 		zanClient.DoRedis("DEL", pk.ShardingKey(), true, rawKey)
 	}
 }
+
+func TestClientReadOnNotExistNamespace(t *testing.T) {
+	conf := &Conf{
+		DialTimeout:  time.Second * 2,
+		ReadTimeout:  time.Second * 2,
+		WriteTimeout: time.Second * 2,
+		MaxConnWait:  time.Second / 4,
+		TendInterval: 1,
+		Namespace:    "not_exist",
+	}
+	conf.LookupList = append(conf.LookupList, pdAddr)
+	logLevel := int32(2)
+	if testing.Verbose() {
+		logLevel = 3
+	}
+	SetLogger(logLevel, newTestLogger(t))
+	zanClient, err := NewZanRedisClient(conf)
+	assert.Nil(t, err)
+	zanClient.Start()
+	defer zanClient.Stop()
+	time.Sleep(time.Second)
+
+	s := time.Now()
+	_, err = zanClient.KVGet("testset", []byte("getnokey"))
+	assert.Equal(t, errNoAnyPartitions, err)
+	cost := time.Since(s)
+	t.Logf("cost %s", cost)
+	assert.True(t, cost < conf.MaxConnWait*2)
+}
