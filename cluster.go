@@ -969,10 +969,12 @@ func (cluster *Cluster) tendNodes() {
 		cluster.wg.Done()
 	}()
 
+	trigCnt := 0
 	for {
 		select {
 		case <-tendTicker.C:
 			cluster.tend()
+			trigCnt = 0
 
 			nodes := getNodesFromParts(cluster.getPartitions())
 			for _, n := range nodes {
@@ -982,7 +984,12 @@ func (cluster *Cluster) tendNodes() {
 		case <-cluster.tendTrigger:
 			levelLog.Infof("trigger tend")
 			cluster.tend()
-			time.Sleep(MinRetrySleep / 2)
+			trigCnt++
+			d := time.Duration(trigCnt) * MinRetrySleep
+			if d > time.Second {
+				d = time.Second
+			}
+			time.Sleep(d)
 		case <-cluster.quitC:
 			nodes := getNodesFromParts(cluster.getPartitions())
 			for _, node := range nodes {
