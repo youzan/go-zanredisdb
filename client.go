@@ -1128,4 +1128,6 @@ var slowCmds = map[string]bool{
 	"hvals":    true,
 	"keys":     true,
 	"smembers": true,
+	"lrange":   true,
+	"bitcount": true,
 }
