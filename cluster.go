@@ -203,7 +203,7 @@ func (rh *RedisHost) getConnPoolForLargeKey(vsize int, maxAllowed int) *redis.Qu
 	}
 
 	ratio := int(math.Log2(float64(maxAllowed / vsize)))
-	if ratio >= len(rh.largeKVPool) {
+	if ratio >= len(rh.largeKVPool) || ratio < 0 {
 		return rh.connPool
 	}
 	if levelLog.Level() > LOG_INFO {
