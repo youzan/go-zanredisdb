@@ -871,14 +871,10 @@ func TestClientReadFailedLocalNonPrimary(t *testing.T) {
 }
 
 func testClientReadLocal(t *testing.T, testSameWithPrimary bool, testFailedLocal bool) {
-	conf := &Conf{
-		DialTimeout:  time.Second * 2,
-		ReadTimeout:  time.Second * 2,
-		WriteTimeout: time.Second * 2,
-		TendInterval: 1,
-		Namespace:    testNS,
-		DC:           "t1",
-	}
+	conf := NewDefaultConf()
+	conf.TendInterval = 1
+	conf.Namespace = testNS
+	conf.DC = "t1"
 	if testSameWithPrimary {
 		conf.MultiConf = append(conf.MultiConf, RemoteClusterConf{
 			LookupList: []string{pdAddr},
@@ -926,20 +922,14 @@ func testClientReadLocal(t *testing.T, testSameWithPrimary bool, testFailedLocal
 		_, err := zanClient.DoRedis("DEL", pk.ShardingKey(), true, rawKey)
 		value, err := redis.Bytes(zanClient.DoRedisTryLocalRead("GET", pk.ShardingKey(),
 			true, rawKey))
-		if err != redis.ErrNil && len(value) > 0 {
-			t.Fatalf("should be deleted:%v, value:%v", err, value)
-		}
+		assert.Equal(t, redis.ErrNil, err, "should be deleted")
+		assert.Equal(t, 0, len(value))
 
 		_, err = redis.String(zanClient.DoRedis("SET", pk.ShardingKey(), true, rawKey, testValue))
-		if err != nil {
-			t.Fatal(err)
-		}
+		assert.Nil(t, err)
 		value, err = redis.Bytes(zanClient.DoRedisTryLocalRead("GET", pk.ShardingKey(), true, rawKey))
-		if err != nil {
-			t.Error(err)
-		} else if !bytes.Equal(value, testValue) {
-			t.Errorf("should equal: %v, %v", value, testValue)
-		}
+		assert.Nil(t, err)
+		assert.Equal(t, testValue, value)
 		zanClient.DoRedis("DEL", pk.ShardingKey(), true, rawKey)
 	}
 }

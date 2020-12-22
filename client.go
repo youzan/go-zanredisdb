@@ -290,7 +290,6 @@ func (self *ZanRedisClient) internalDoRedis(cmd string, shardingKey []byte,
 	var rsp interface{}
 	var conn redis.Conn
 	var redisHost *RedisHost
-	reqStart := time.Now()
 	ro := self.conf.ReadTimeout
 	if ro == 0 {
 		ro = time.Second
@@ -329,6 +328,8 @@ func (self *ZanRedisClient) internalDoRedis(cmd string, shardingKey []byte,
 			levelLog.Infof("command %v-%v large key value: %v, %v", cmd, string(shardingKey), argsVSize, len(args))
 		}
 	}
+	reqStart := time.Now()
+	getConnStart := reqStart
 	for retry < uint32(retryCnt) || time.Since(reqStart) < ro {
 		retry++
 		if retry > 2 {
@@ -368,7 +369,7 @@ func (self *ZanRedisClient) internalDoRedis(cmd string, shardingKey []byte,
 				break
 			}
 			// we should break early if get conn failed too long
-			if time.Since(reqStart) > self.conf.MaxConnWait {
+			if time.Since(getConnStart) > self.conf.MaxConnWait {
 				break
 			}
 			time.Sleep(MinRetrySleep + MinRetrySleep*time.Duration(2<<retry))
@@ -416,6 +417,8 @@ func (self *ZanRedisClient) internalDoRedis(cmd string, shardingKey []byte,
 			redisHost.IncSuccess()
 			break
 		}
+		// reset connection get start time after some real read/write operation
+		getConnStart = time.Now()
 	}
 	if self.largeKeyConf != nil {
 		brsp, _ := redis.Bytes(rsp, err)
