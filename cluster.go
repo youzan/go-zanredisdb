@@ -98,6 +98,17 @@ func newConnPool(
 	return connPool
 }
 
+func getRangeCnt(cnt int, ratio float64) int {
+	if ratio < 0.001 || ratio > 1 {
+		ratio = 0.2
+	}
+	ncnt := int(float64(cnt) * ratio)
+	if ncnt < 1 {
+		ncnt = 1
+	}
+	return ncnt
+}
+
 func (rh *RedisHost) InitConnPool(
 	newFn func() (redis.Conn, error),
 	newRangeFn func() (redis.Conn, error),
@@ -121,14 +132,8 @@ func (rh *RedisHost) InitConnPool(
 	if ratio < 0.01 {
 		ratio = 0.4
 	}
-	maxIdle = int(float64(maxIdle) * ratio)
-	if maxIdle < 1 {
-		maxIdle = 1
-	}
-	maxActive = int(float64(maxActive) * ratio)
-	if maxActive < 1 {
-		maxActive = 1
-	}
+	maxIdle = getRangeCnt(maxIdle, ratio)
+	maxActive = getRangeCnt(maxActive, ratio)
 	rh.rangeConnPool = newConnPool(
 		maxIdle,
 		maxActive,
@@ -259,13 +264,8 @@ func (rh *RedisHost) ChangeMaxActive(maxActive int, rangeRatio float64) {
 	if maxActive <= 0 {
 		return
 	}
-	if rangeRatio < 0.01 {
-		rangeRatio = 0.4
-	}
-	maxRangeActive := int(float64(maxActive) * rangeRatio)
-	if maxRangeActive < 1 {
-		maxRangeActive = 1
-	}
+	maxRangeActive := getRangeCnt(maxActive, rangeRatio)
+
 	rh.connPool.SetMaxActive(int32(maxActive))
 	rh.rangeConnPool.SetMaxActive(int32(maxRangeActive))
 }
