@@ -12,6 +12,8 @@ github.com/absolute8511/redigo v1.4.3 h1:6pGvkwupasEaJSYwOXfSEKM3mYL+CqtH2FIFGSz
 github.com/absolute8511/redigo v1.4.3/go.mod h1:ncnpDtZTl7oMnWRkyfo8hfwC8+u3HlzK3XEzJ7W/M08=
 github.com/absolute8511/redigo v1.4.4 h1:Fut46ugsvDmgjYRkA+darC1dhkGC39CbqfIEKUlcR90=
 github.com/absolute8511/redigo v1.4.4/go.mod h1:ncnpDtZTl7oMnWRkyfo8hfwC8+u3HlzK3XEzJ7W/M08=
+github.com/absolute8511/redigo v1.4.6 h1:22Zgx7rKi/veL2xs7PEOvQS5fy2E5BBW6yRhId9WsTo=
+github.com/absolute8511/redigo v1.4.6/go.mod h1:ncnpDtZTl7oMnWRkyfo8hfwC8+u3HlzK3XEzJ7W/M08=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=

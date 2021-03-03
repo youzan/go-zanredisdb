@@ -57,11 +57,13 @@ func getPoolType(isRange bool) PoolType {
 }
 
 type HostStats struct {
-	PoolCnt         int   `json:"pool_cnt,omitempty"`
-	RangePoolCnt    int   `json:"range_pool_cnt,omitempty"`
-	LargeKeyPoolCnt []int `json:"large_key_pool_cnt,omitempty"`
-	FailedCnt       int64 `json:"failed_cnt,omitempty"`
-	FailedTs        int64 `json:"failed_cnt,omitempty"`
+	PoolCnt          int   `json:"pool_cnt,omitempty"`
+	PoolWaitCnt      int   `json:"pool_wait_cnt,omitempty"`
+	RangePoolCnt     int   `json:"range_pool_cnt,omitempty"`
+	RangePoolWaitCnt int   `json:"range_pool_wait_cnt,omitempty"`
+	LargeKeyPoolCnt  []int `json:"large_key_pool_cnt,omitempty"`
+	FailedCnt        int64 `json:"failed_cnt,omitempty"`
+	FailedTs         int64 `json:"failed_cnt,omitempty"`
 }
 
 type RedisHost struct {
@@ -275,7 +277,9 @@ func (rh *RedisHost) Stats() HostStats {
 	hs.FailedCnt = atomic.LoadInt64(&rh.lastFailedCnt)
 	hs.FailedTs = atomic.LoadInt64(&rh.lastFailedTs)
 	hs.PoolCnt = rh.connPool.Count()
+	hs.PoolWaitCnt = rh.connPool.WaitingCount()
 	hs.RangePoolCnt = rh.rangeConnPool.Count()
+	hs.RangePoolWaitCnt = rh.rangeConnPool.WaitingCount()
 	for _, p := range rh.largeKVPool {
 		hs.LargeKeyPoolCnt = append(hs.LargeKeyPoolCnt, p.Count())
 	}

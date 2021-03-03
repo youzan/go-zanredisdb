@@ -93,6 +93,10 @@ func (self *ZanRedisClient) Start() {
 	self.cluster = NewCluster(self.conf, self.largeKeyConf)
 }
 
+func (self *ZanRedisClient) Stats() map[string]HostStats {
+	return self.cluster.GetHostStats()
+}
+
 // while deploy across two datacenters, to improve read latency we can
 // enable this, and set toLeader=false while calling DoRedis
 // if there is no node in the same data center, we will fallback to the random node in other dc.
