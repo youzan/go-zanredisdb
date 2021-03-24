@@ -828,6 +828,7 @@ func (cluster *Cluster) tend() {
 		return
 	}
 
+	levelLog.Infof("namespace info from server is: %v, old %v", data.Epoch, oldEpoch)
 	for partID, partNodeInfo := range data.Partitions {
 		if partID >= newPartitions.PNum || partID < 0 {
 			levelLog.Errorf("got invalid partition : %v", partID)
@@ -961,6 +962,7 @@ func (cluster *Cluster) tend() {
 		newHostPartitions.PList = append(newHostPartitions.PList, pi)
 	}
 	cluster.setPartitions(newHostPartitions)
+	levelLog.Infof("namespace info update to epoch: %v", data.Epoch)
 	for _, p := range cleanHosts {
 		p.CloseConn()
 	}
