@@ -824,11 +824,13 @@ func (cluster *Cluster) tend() {
 		return
 	}
 	if data.Epoch < oldEpoch {
-		levelLog.Infof("namespace info is older: %v vs %v", data.Epoch, oldEpoch)
+		// it may happen than different lookup have different epoch, because the epoch is the watched cluster max index while
+		// get the data from etcd. (it may have two epoch but have the same namespace info if some other data (not the namespace info) changed during get)
+		levelLog.Debugf("lookup %v namespace %v info epoch is older: %v vs %v", queryStr, cluster.namespace, data.Epoch, oldEpoch)
 		return
 	}
 
-	levelLog.Infof("namespace info from server is: %v, old %v", data.Epoch, oldEpoch)
+	levelLog.Infof("lookup %v namespace %v info epoch from server is: %v, old %v", queryStr, cluster.namespace, data.Epoch, oldEpoch)
 	for partID, partNodeInfo := range data.Partitions {
 		if partID >= newPartitions.PNum || partID < 0 {
 			levelLog.Errorf("got invalid partition : %v", partID)
@@ -962,7 +964,7 @@ func (cluster *Cluster) tend() {
 		newHostPartitions.PList = append(newHostPartitions.PList, pi)
 	}
 	cluster.setPartitions(newHostPartitions)
-	levelLog.Infof("namespace info update to epoch: %v", data.Epoch)
+	levelLog.Infof("namespace %v info update to epoch: %v", cluster.namespace, data.Epoch)
 	for _, p := range cleanHosts {
 		p.CloseConn()
 	}
