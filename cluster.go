@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/absolute8511/redigo/redis"
-	"github.com/spaolacci/murmur3"
+	"github.com/twmb/murmur3"
 )
 
 const (
